@@ -1,0 +1,32 @@
+# Node.js
+frontend/node_modules/
+frontend/.next/
+frontend/out/
+frontend/build/
+frontend/.env*.local
+frontend/npm-debug.log*
+frontend/yarn-debug.log*
+frontend/yarn-error.log*
+frontend/.pnpm-debug.log*
+
+# Python
+backend/__pycache__/
+backend/*.py[cod]
+backend/*$py.class
+backend/.pytest_cache/
+backend/.venv/
+backend/venv/
+backend/env/
+backend/ENV/
+backend/.env
+
+# PostgreSQL 데이터 디렉토리 (Docker 볼륨용)
+pgdata/
+
+# OS/IDE
+.DS_Store
+.vscode/
+.idea/
+
+# Root Env
+.env

@@ -1,0 +1,64 @@
+version: '3.8'
+
+services:
+  # 데이터베이스 서비스 (PostgreSQL)
+  postgres:
+    image: postgres:15-alpine
+    container_name: personal-ai-os-db
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: personal_ai_os
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d personal_ai_os"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # 백엔드 서비스 (FastAPI)
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: personal-ai-os-backend
+    environment:
+      - DATABASE_URL=postgresql://postgres:postgres@postgres:5432/personal_ai_os
+      - OPENROUTER_API_KEY=${OPENROUTER_API_KEY:-mock_key}
+      - GITHUB_TOKEN=${GITHUB_TOKEN:-mock_token}
+      - WEATHER_API_KEY=${WEATHER_API_KEY:-mock_weather_key}
+    ports:
+      - "8000:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    volumes:
+      - ./backend:/app
+    # 개발 환경에서의 핫리로드 적용
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+
+  # 프론트엔드 서비스 (Next.js)
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: personal-ai-os-frontend
+    environment:
+      - NEXT_PUBLIC_API_URL=http://localhost:8000
+    ports:
+      - "3000:3000"
+    depends_on:
+      - backend
+    volumes:
+      - ./frontend:/app
+      # node_modules는 호스트의 설정에 구애받지 않도록 컨테이너 내부 볼륨으로 격리
+      - /app/node_modules
+      - /app/.next
+    command: npm run dev
+
+volumes:
+  pgdata:
+    driver: local
