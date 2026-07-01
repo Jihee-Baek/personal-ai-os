@@ -1,6 +1,13 @@
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Depends
 from typing import List
-from app.schemas.api_schemas import WeatherResponse, StockItem, ExchangeItem, TodoItem, ChatRequest, ChatResponse
+from sqlalchemy.orm import Session
+
+from app.core.database import get_db
+from app.models.todo import Todo
+from app.models.memo import Memo
+from app.schemas.api_schemas import WeatherResponse, StockItem, ExchangeItem, ChatRequest, ChatResponse
+from app.schemas.todo_schemas import TodoCreate, TodoUpdate, TodoResponse
+from app.schemas.memo_schemas import MemoCreate, MemoResponse
 from app.services.ai_service import AIService
 
 router = APIRouter()
@@ -40,14 +47,82 @@ def get_exchange():
         ExchangeItem(currency="EUR", rate=1492.8, change=1.2, change_percent=0.08)
     ]
 
-@router.get("/todos", response_model=List[TodoItem])
-def get_todos():
-    """오늘의 일정 및 할 일 목록 반환 (한글 더미 데이터)"""
-    return [
-        TodoItem(id=1, title="AI OS 초기 구조 설계 및 MVP 구축", completed=True, due_date="완료"),
-        TodoItem(id=2, title="Docker Compose 다중 컨테이너 연동 테스트", completed=False, due_date="오늘"),
-        TodoItem(id=3, title="프로젝트 기술 스택 설명 문서 작성", completed=False, due_date="내일")
-    ]
+# ----------------- TODO (일정 관리) DB CRUD API -----------------
+
+@router.get("/todos", response_model=List[TodoResponse])
+def get_todos(db: Session = Depends(get_db)):
+    """DB에서 전체 일정 목록 조회"""
+    return db.query(Todo).order_by(Todo.created_at.asc()).all()
+
+@router.post("/todos", response_model=TodoResponse)
+def create_todo(payload: TodoCreate, db: Session = Depends(get_db)):
+    """DB에 새로운 일정 추가"""
+    db_todo = Todo(
+        title=payload.title,
+        description=payload.description,
+        location=payload.location,
+        completed=payload.completed,
+        due_date=payload.due_date,
+        recurrence=payload.recurrence
+    )
+    db.add(db_todo)
+    db.commit()
+    db.refresh(db_todo)
+    return db_todo
+
+@router.patch("/todos/{todo_id}", response_model=TodoResponse)
+def update_todo(todo_id: int, payload: TodoUpdate, db: Session = Depends(get_db)):
+    """일정 상태 및 필드 정보 수정"""
+    db_todo = db.query(Todo).filter(Todo.id == todo_id).first()
+    if not db_todo:
+        raise HTTPException(status_code=404, detail="일정을 찾을 수 없습니다.")
+    
+    # 전달된 유효 값들만 동적으로 반영 (Pydantic v2 model_dump 사용)
+    update_data = payload.model_dump(exclude_unset=True)
+    for key, value in update_data.items():
+        setattr(db_todo, key, value)
+        
+    db.commit()
+    db.refresh(db_todo)
+    return db_todo
+
+@router.delete("/todos/{todo_id}")
+def delete_todo(todo_id: int, db: Session = Depends(get_db)):
+    """일정 삭제"""
+    db_todo = db.query(Todo).filter(Todo.id == todo_id).first()
+    if not db_todo:
+        raise HTTPException(status_code=404, detail="일정을 찾을 수 없습니다.")
+    db.delete(db_todo)
+    db.commit()
+    return {"message": "일정이 성공적으로 삭제되었습니다."}
+
+# ----------------- MEMO (빠른 메모) DB CRUD API -----------------
+
+@router.get("/memos", response_model=List[MemoResponse])
+def get_memos(db: Session = Depends(get_db)):
+    """전체 메모 목록 조회"""
+    return db.query(Memo).order_by(Memo.created_at.desc()).all()
+
+@router.post("/memos", response_model=MemoResponse)
+def create_memo(payload: MemoCreate, db: Session = Depends(get_db)):
+    """새로운 메모 추가"""
+    db_memo = Memo(content=payload.content)
+    db.add(db_memo)
+    db.commit()
+    db.refresh(db_memo)
+    return db_memo
+
+@router.delete("/memos/{memo_id}")
+def delete_memo(memo_id: int, db: Session = Depends(get_db)):
+    """메모 삭제"""
+    db_memo = db.query(Memo).filter(Memo.id == memo_id).first()
+    if not db_memo:
+        raise HTTPException(status_code=404, detail="메모를 찾을 수 없습니다.")
+    db.delete(db_memo)
+    db.commit()
+    return {"message": "메모가 성공적으로 삭제되었습니다."}
+
+# ----------------- AI Chat API -----------------
 
 @router.post("/chat", response_model=ChatResponse)
 def post_chat(payload: ChatRequest):
