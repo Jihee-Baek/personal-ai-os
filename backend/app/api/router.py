@@ -127,9 +127,9 @@ def delete_memo(memo_id: int, db: Session = Depends(get_db)):
 @router.post("/chat", response_model=ChatResponse)
 def post_chat(payload: ChatRequest):
     """AI 비서 대화 엔드포인트 (Provider Layer 경유)"""
-    provider = payload.provider or "claude"
+    provider = payload.provider
     try:
         reply = ai_service.chat(payload.message, provider_name=provider)
-        return ChatResponse(reply=reply, provider=provider)
+        return ChatResponse(reply=reply, provider=provider or ai_service.default_provider)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
