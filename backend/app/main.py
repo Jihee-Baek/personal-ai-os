@@ -1,7 +1,17 @@
+import logging
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.core.config import settings
 from app.api.router import router as api_router
+
+# 백엔드 표준 로깅 기본 설정 (stdout 출력으로 Render 로그 연동)
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+    handlers=[logging.StreamHandler()]
+)
+logger = logging.getLogger("app.main")
+logger.info("Personal AI OS 백엔드 로깅 시스템이 기동되었습니다.")
 
 app = FastAPI(
     title=settings.PROJECT_NAME,
