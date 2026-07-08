@@ -19,16 +19,11 @@ app = FastAPI(
     version="0.1.0",
 )
 
-# 프론트엔드(Next.js)와 백엔드 간 CORS 연동 설정
-origins = [
-    "http://localhost:3000",
-    "http://127.0.0.1:3000",
-]
-
+# 프론트엔드(Next.js)와 백엔드 간 CORS 연동 설정 (Vercel 배포 도메인 대응을 위해 와일드카드 오픈)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=origins,
-    allow_credentials=True,
+    allow_origins=["*"],
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )
