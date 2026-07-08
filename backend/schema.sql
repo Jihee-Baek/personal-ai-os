@@ -18,3 +18,11 @@ CREATE TABLE IF NOT EXISTS memos (
     content TEXT NOT NULL,                                                    -- 메모 본문 (필수, 마크다운 지원 가능)
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL    -- 생성 시각
 );
+
+-- 3. 사용자 관심 주식 종목 테이블 (user_stocks)
+CREATE TABLE IF NOT EXISTS user_stocks (
+    id SERIAL PRIMARY KEY,
+    symbol VARCHAR(20) UNIQUE NOT NULL,                                       -- 주식 티커 / 종목코드 (예: "005930.KS", "AAPL")
+    name VARCHAR(100) NOT NULL,                                               -- 종목명 (예: "삼성전자", "애플")
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL    -- 생성 시각
+);

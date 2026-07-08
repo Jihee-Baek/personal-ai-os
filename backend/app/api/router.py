@@ -6,13 +6,19 @@ from sqlalchemy.orm import Session
 from app.core.database import get_db
 from app.models.todo import Todo
 from app.models.memo import Memo
+from app.models.stock import UserStock
 from app.schemas.api_schemas import WeatherResponse, StockItem, ExchangeItem, ChatRequest, ChatResponse
 from app.schemas.todo_schemas import TodoCreate, TodoUpdate, TodoResponse
 from app.schemas.memo_schemas import MemoCreate, MemoResponse
+from app.schemas.stock_schemas import StockCreate, StockResponse
 from app.services.ai_service import AIService
+from app.services.weather_service import WeatherService
+from app.services.finance_service import FinanceService
 
 router = APIRouter()
 ai_service = AIService()
+weather_service = WeatherService()
+finance_service = FinanceService()
 logger = logging.getLogger(__name__)
 
 @router.get("/health")
@@ -21,37 +27,72 @@ def health_check():
     logger.info("GET /health 호출됨")
     return {"status": "healthy", "message": "Personal AI OS 백엔드가 성공적으로 가동 중입니다."}
 
+# ----------------- 실시간 외부 날씨 API -----------------
+
 @router.get("/weather", response_model=WeatherResponse)
 def get_weather():
-    """오늘의 날씨 정보 반환 (한글 더미 데이터)"""
+    """실시간 서울 날씨 정보 반환 (OpenWeatherMap API 연동)"""
     logger.info("GET /weather 호출됨")
-    return WeatherResponse(
-        location="서울",
-        temperature=24.5,
-        condition="맑음",
-        humidity=60,
-        wind_speed=2.5
-    )
+    return weather_service.get_current_weather()
 
-@router.get("/stocks", response_model=List[StockItem])
-def get_stocks():
-    """주식 관심 종목 정보 반환 (한글 더미 데이터)"""
-    logger.info("GET /stocks 호출됨")
-    return [
-        StockItem(symbol="005930", name="삼성전자", price=78500.0, change=1200.0, change_percent=1.55),
-        StockItem(symbol="035720", name="카카오", price=48200.0, change=-300.0, change_percent=-0.62),
-        StockItem(symbol="AAPL", name="애플", price=263500.0, change=3500.0, change_percent=1.35)
-    ]
+# ----------------- 실시간 외부 환율 API -----------------
 
 @router.get("/exchange", response_model=List[ExchangeItem])
 def get_exchange():
-    """실시간 주요 환율 정보 반환 (한글 더미 데이터)"""
+    """실시간 주요 원화 환율 정보 반환 (ER-API 연동)"""
     logger.info("GET /exchange 호출됨")
-    return [
-        ExchangeItem(currency="USD", rate=1385.5, change=4.5, change_percent=0.33),
-        ExchangeItem(currency="JPY", rate=862.4, change=-2.1, change_percent=-0.24),
-        ExchangeItem(currency="EUR", rate=1492.8, change=1.2, change_percent=0.08)
-    ]
+    return finance_service.get_realtime_exchange()
+
+# ----------------- 관심 주식 DB CRUD 및 실시간 시세 API -----------------
+
+@router.get("/stocks", response_model=List[StockItem])
+def get_stocks(db: Session = Depends(get_db)):
+    """DB에 등록된 관심 종목들의 실시간 주식 가격 정보를 반환 (yfinance 연동)"""
+    logger.info("GET /stocks 호출됨 (동적 관심 주식 시황 조회)")
+    
+    # DB에 저장된 사용자의 관심 주식 심볼 리스트 수집
+    db_stocks = db.query(UserStock).order_by(UserStock.created_at.asc()).all()
+    
+    # 서비스에 전달할 형식인 [{"symbol": ..., "name": ...}] 구조로 변환
+    stock_payload = [{"symbol": s.symbol, "name": s.name} for s in db_stocks]
+    
+    # 실시간 시세 수집 후 리턴
+    return finance_service.get_realtime_stocks(stock_payload)
+
+@router.post("/stocks", response_model=StockResponse)
+def create_stock(payload: StockCreate, db: Session = Depends(get_db)):
+    """새로운 관심 주식 종목 추가"""
+    logger.info("POST /stocks 호출됨 - 심볼: '%s', 종목명: '%s'", payload.symbol, payload.name)
+    
+    # 중복 체크
+    exists = db.query(UserStock).filter(UserStock.symbol == payload.symbol).first()
+    if exists:
+        logger.warning("POST /stocks 실패 - 이미 등록된 주식 기호: %s", payload.symbol)
+        raise HTTPException(status_code=400, detail="이미 관심 종목에 등록되어 있는 티커입니다.")
+        
+    db_stock = UserStock(
+        symbol=payload.symbol,
+        name=payload.name
+    )
+    db.add(db_stock)
+    db.commit()
+    db.refresh(db_stock)
+    logger.info("관심 주식 추가 완료: ID=%d, 심볼=%s", db_stock.id, db_stock.symbol)
+    return db_stock
+
+@router.delete("/stocks/{stock_id}")
+def delete_stock(stock_id: int, db: Session = Depends(get_db)):
+    """관심 주식 종목 삭제"""
+    logger.info("DELETE /stocks/%d 호출됨", stock_id)
+    db_stock = db.query(UserStock).filter(UserStock.id == stock_id).first()
+    if not db_stock:
+        logger.warning("DELETE /stocks/%d 실패 - 종목을 찾을 수 없음", stock_id)
+        raise HTTPException(status_code=404, detail="관심 종목을 찾을 수 없습니다.")
+        
+    db.delete(db_stock)
+    db.commit()
+    logger.info("관심 주식 해제 완료: ID=%d", stock_id)
+    return {"message": "관심 종목이 성공적으로 해제되었습니다."}
 
 # ----------------- TODO (일정 관리) DB CRUD API -----------------
 
