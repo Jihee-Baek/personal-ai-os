@@ -8,7 +8,7 @@ logger = logging.getLogger(__name__)
 
 class GitHubService:
     """
-    GitHub REST API를 호출하여 최근 사용자의 개발 활동(커밋, PR 등)을 수집하는 서비스 (상세 로깅 탑재)
+    GitHub REST API를 호출하여 최근 사용자의 개발 활동(커밋, PR 등)을 수집하는 서비스 (상세 이벤트 대응 버전)
     """
     def __init__(self):
         self.token = settings.GITHUB_TOKEN
@@ -73,24 +73,50 @@ class GitHubService:
                         created_time = ev.get("created_at", "")
                         payload = ev.get("payload", {})
                         
-                        # 이벤트 성격별 표시용 요약 메시지 구성
-                        msg = "활동 이력이 기록되었습니다."
+                        # 다양한 이벤트 성격별 표시용 요약 메시지 구성
+                        msg = f"활동 이력이 감지되었습니다. ({ev_type})"
+                        
                         if ev_type == "PushEvent":
                             commits = payload.get("commits", [])
                             if commits:
                                 msg = f"commit: {commits[0].get('message', 'Push 완료')}"
+                            else:
+                                msg = "코드 Push 완료"
+                                
                         elif ev_type == "PullRequestEvent":
                             action = payload.get("action", "updated")
                             pr_title = payload.get("pull_request", {}).get("title", "")
-                            msg = f"{action} PR: {pr_title}"
+                            msg = f"PR {action}: {pr_title}"
+                            
                         elif ev_type == "IssuesEvent":
                             action = payload.get("action", "updated")
                             issue_title = payload.get("issue", {}).get("title", "")
-                            msg = f"{action} issue: {issue_title}"
+                            msg = f"Issue {action}: {issue_title}"
+                            
                         elif ev_type == "CreateEvent":
                             ref_type = payload.get("ref_type", "repository")
-                            msg = f"created {ref_type}: {payload.get('ref', '') or repo_name}"
+                            ref_name = payload.get("ref", "")
+                            msg = f"생성 완료 - {ref_type}: {ref_name or repo_name}"
                             
+                        elif ev_type == "DeleteEvent":
+                            ref_type = payload.get("ref_type", "branch")
+                            ref_name = payload.get("ref", "")
+                            msg = f"삭제 완료 - {ref_type}: {ref_name}"
+                            
+                        elif ev_type == "WatchEvent":
+                            msg = "★ Star 등록 (관심 저장소 지정)"
+                            
+                        elif ev_type == "ForkEvent":
+                            msg = "저장소 Fork 완료 (코드 복제)"
+                            
+                        elif ev_type == "IssueCommentEvent":
+                            comment_body = payload.get("comment", {}).get("body", "")
+                            msg = f"이슈 댓글 작성: {comment_body[:20]}..." if len(comment_body) > 20 else f"이슈 댓글 작성: {comment_body}"
+                            
+                        elif ev_type == "CommitCommentEvent":
+                            comment_body = payload.get("comment", {}).get("body", "")
+                            msg = f"커밋 댓글 작성: {comment_body[:20]}..." if len(comment_body) > 20 else f"커밋 댓글 작성: {comment_body}"
+
                         result_items.append(GitHubEventItem(
                             type=ev_type,
                             repo=repo_name,
@@ -98,7 +124,7 @@ class GitHubService:
                             created_at=created_time
                         ))
                     
-                    logger.info("GitHubService: 깃허브 최근 이벤트 %d개 수집 및 파싱 정제 완료", len(result_items))
+                    logger.info("GitHubService: 깃허브 최근 이벤트 %d개 수집 및 상세 파싱 완료", len(result_items))
                     return result_items
                 else:
                     logger.error("GitHubService: 깃허브 이벤트 조회 API 실패 (코드: %d) - 상세: %s", 
