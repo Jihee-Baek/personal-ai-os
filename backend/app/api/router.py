@@ -68,65 +68,111 @@ def get_stocks(db: Session = Depends(get_db)):
     # 실시간 시세 수집 후 리턴
     return finance_service.get_realtime_stocks(stock_payload)
 
+import pandas as pd
+from typing import Dict, Any
+
+# 🇰🇷 한국거래소(KRX) 상장법인 실시간 마스터 데이터 메모리 캐시
+_krx_cache: List[Dict[str, Any]] = []
+
+def _load_krx_cache():
+    """대한민국 정부 한국거래소(KRX) 상장법인 공식 마스터 리스트를 실시간 다운로드하여 메모리에 캐싱"""
+    global _krx_cache
+    if _krx_cache:
+        return
+    try:
+        logger.info("KRX 캐시 적재 시작 - 한국거래소 상장사 전체 목록 실시간 다운로드 중...")
+        url = "http://kind.krx.co.kr/corpgeneral/corpList.do?method=download"
+        # CP949 인코딩을 적용해 한글 종목명 깨짐 현상을 근본적으로 해결합니다.
+        df = pd.read_html(url, header=0, encoding="cp949")[0]
+        
+        temp_list = []
+        for _, row in df.iterrows():
+            code = str(row["종목코드"]).zfill(6) # 005930 과 같이 6자리 패딩 보장
+            name = str(row["회사명"])
+            temp_list.append({
+                "symbol": f"{code}.KS",
+                "name": name,
+                "market": "KOSPI/KOSDAQ"
+            })
+        _krx_cache = temp_list
+        logger.info("KRX 캐시 적재 완료 - 총 %d개 한국 주식 상장사 동적 로드 성공", len(_krx_cache))
+    except Exception as e:
+        logger.error("KRX 상장사 마스터 다운로드 및 파싱 실패: %s", str(e))
+        _krx_cache = []
+
 @router.get("/stocks/search")
 def search_stocks(q: str):
-    """야후 파이낸스 표준 API를 사용하여 하드코딩 없는 한글/영문 전세계 주식 실시간 검색 (이중 인코딩 해결)"""
+    """한국거래소 실시간 상장사 목록과 야후 파이낸스 글로벌 API를 하이브리드로 병합해 실시간 검색"""
     logger.info("GET /stocks/search 호출됨 - 검색어: '%s'", q)
     if not q or not q.strip():
         return []
         
-    query = q.strip()
+    query = q.strip().lower()
     results = []
+    seen_symbols = set()
     
-    import httpx
-    
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-    }
-    
-    # 💡 [이중 인코딩 해결] URL에 직접 quote(query)를 넣지 않고 params 딕셔너리로 넘기면,
-    # httpx 라이브러리가 표준에 맞게 단 한 번만 깨끗하게 퍼센트 인코딩 처리를 수행하여 400 에러를 방지합니다.
-    yahoo_url = "https://query1.finance.yahoo.com/v1/finance/search"
-    query_params = {
-        "q": query,
-        "quotesCount": 8
-    }
-    
+    # 1단계: 한국거래소(KRX) 메모리 캐시 로드 및 0ms 초고속 한글 검색 매핑
     try:
-        with httpx.Client(timeout=10.0) as client:
-            res = client.get(yahoo_url, params=query_params, headers=headers)
-            if res.status_code == 200:
-                data = res.json()
-                quotes = data.get("quotes", [])
-                for quote_item in quotes:
-                    if quote_item.get("quoteType") == "EQUITY":
-                        symbol = quote_item.get("symbol", "")
-                        
-                        # 야후 한글 검색 시 longname 또는 shortname에 한글 정식 종목명이 포함되어 반환됩니다.
-                        name = quote_item.get("longname") or quote_item.get("shortname") or symbol
-                        exchange = quote_item.get("exchange", "Unknown")
-                        
-                        # 한국 시장 및 미국 시장 태그 구분
-                        market = "NASDAQ/NYSE"
-                        if exchange in ["KSC", "KOE", "KOSDAQ"]:
-                            market = "KOSPI/KOSDAQ"
-                        elif exchange in ["NMS", "NMS/NGS", "NYQ", "ASE"]:
-                            market = "NASDAQ/NYSE"
-                        else:
-                            market = exchange
-                            
-                        results.append({
-                            "symbol": symbol,
-                            "name": name,
-                            "market": market
-                        })
-                logger.info("GET /stocks/search 야후 API 연동 성공 (검색결과: %d건)", len(results))
-            else:
-                logger.error("GET /stocks/search 야후 API 실패 - 상태코드: %d, 응답: %s", res.status_code, res.text)
-    except Exception as e:
-        logger.error("GET /stocks/search 야후 API 검색 중 예외 발생: %s", str(e))
+        _load_krx_cache()
+        if _krx_cache:
+            for stock in _krx_cache:
+                if query in stock["name"].lower() or query in stock["symbol"].lower():
+                    results.append(stock)
+                    seen_symbols.add(stock["symbol"])
+    except Exception as krx_e:
+        logger.error("GET /stocks/search KRX 캐시 필터링 중 오류: %s", str(krx_e))
         
-    # 최대 8개 검색 항목 슬라이싱
+    # 2단계: 글로벌 야후 파이낸스 API 호출 (영문/해외 주식 검색어 입력 시 폴백)
+    # 한글 입력 시 야후 서버가 400 Bad Request를 뿜는 제약을 방지하기 위해, 한글이 포함된 쿼리는 야후 호출을 패스합니다.
+    is_korean = any(ord('가') <= ord(char) <= ord('힣') for char in query)
+    
+    if not is_korean:
+        import httpx
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+        }
+        yahoo_url = "https://query1.finance.yahoo.com/v1/finance/search"
+        query_params = {
+            "q": query,
+            "quotesCount": 8
+        }
+        try:
+            with httpx.Client(timeout=10.0) as client:
+                res = client.get(yahoo_url, params=query_params, headers=headers)
+                if res.status_code == 200:
+                    data = res.json()
+                    quotes = data.get("quotes", [])
+                    for quote_item in quotes:
+                        if quote_item.get("quoteType") == "EQUITY":
+                            symbol = quote_item.get("symbol", "")
+                            
+                            # 중복 노출 배제
+                            if symbol in seen_symbols or symbol.replace(".KS", "") in seen_symbols:
+                                continue
+                                
+                            name = quote_item.get("longname") or quote_item.get("shortname") or symbol
+                            exchange = quote_item.get("exchange", "Unknown")
+                            
+                            market = "NASDAQ/NYSE"
+                            if exchange in ["KSC", "KOE", "KOSDAQ"]:
+                                market = "KOSPI/KOSDAQ"
+                            elif exchange in ["NMS", "NMS/NGS", "NYQ", "ASE"]:
+                                market = "NASDAQ/NYSE"
+                            else:
+                                market = exchange
+                                
+                            results.append({
+                                "symbol": symbol,
+                                "name": name,
+                                "market": market
+                            })
+                            seen_symbols.add(symbol)
+                else:
+                    logger.error("GET /stocks/search 야후 API 실패 - 상태코드: %d", res.status_code)
+        except Exception as yahoo_e:
+            logger.error("GET /stocks/search 야후 API 추가 조회 실패: %s", str(yahoo_e))
+            
+    # 최대 8개 검색 제안 슬라이싱 반환
     final_results = results[:8]
     logger.info("GET /stocks/search 최종 반환 결과: %d건", len(final_results))
     return final_results
