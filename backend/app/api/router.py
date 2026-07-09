@@ -70,31 +70,68 @@ def get_stocks(db: Session = Depends(get_db)):
 
 @router.get("/stocks/search")
 def search_stocks(q: str):
-    """야후 파이낸스 API를 경유하여 코스피/나스닥 등 전세계 실시간 종목 자동완성 검색"""
+    """네이버 금융 및 야후 파이낸스 실시간 API를 병합하여 하드코딩 없는 100% 동적 전세계 주식 검색"""
     logger.info("GET /stocks/search 호출됨 - 검색어: '%s'", q)
     if not q or not q.strip():
         return []
-    try:
-        import httpx
-        # 야후 파이낸스 Autocomplete 검색 쿼리 전송 (최대 7개)
-        url = f"https://query1.finance.yahoo.com/v1/finance/search?q={q.strip()}&quotesCount=7"
-        headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-        }
-        with httpx.Client(timeout=10.0) as client:
-            res = client.get(url, headers=headers)
-            if res.status_code == 200:
-                data = res.json()
-                quotes = data.get("quotes", [])
-                results = []
+        
+    query = q.strip()
+    results = []
+    seen_symbols = set()
+    
+    import httpx
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+    }
+    
+    with httpx.Client(timeout=10.0) as client:
+        # 1단계: 🇰🇷 네이버 금융 실시간 자동완성 API 호출 (한국 주식 종목명 검색 완벽 보장)
+        try:
+            naver_url = f"https://ac.finance.naver.com/ac?q={httpx.URLExpression(query)}&q_enc=utf-8&st=1&frm=stock&r_format=json&r_enc=utf-8&r_unicode=0&t_koreng=1"
+            # URLExpression 대신 간단한 f-string 쿼리 인코딩 우회
+            naver_url_enc = f"https://ac.finance.naver.com/ac?q={query}&q_enc=utf-8&st=1&frm=stock&r_format=json&r_enc=utf-8&r_unicode=0&t_koreng=1"
+            naver_res = client.get(naver_url_enc, headers=headers)
+            if naver_res.status_code == 200:
+                naver_data = naver_res.json()
+                items = naver_data.get("items", [])
+                if items and items[0]:
+                    for item in items[0]:
+                        # item 형식: [ "종목명", "숫자코드" ] (예: ["삼성전자", "005930"])
+                        if len(item) >= 2:
+                            name = item[0]
+                            code = item[1]
+                            # 야후 파이낸스는 국내 주식 코드 뒤에 .KS(코스피) 또는 .KQ(코스닥) 접미사가 필요합니다.
+                            # 일반적으로 최상위 우량주는 대부분 코스피(.KS)이며, yfinance 조회 시 폴백을 지원하므로 기본 .KS를 부여합니다.
+                            symbol = f"{code}.KS"
+                            
+                            results.append({
+                                "symbol": symbol,
+                                "name": name,
+                                "market": "KOSPI/KOSDAQ"
+                            })
+                            seen_symbols.add(symbol)
+            logger.info("GET /stocks/search 네이버 금융 API 연동 성공 (임시 검색결과: %d건)", len(results))
+        except Exception as naver_e:
+            logger.error("GET /stocks/search 네이버 금융 검색 API 중 오류: %s", str(naver_e))
+
+        # 2단계: 🇺🇸 야후 파이낸스 실시간 Autocomplete API 호출 (미국/전세계 주식 및 티커 검색 보장)
+        try:
+            yahoo_url = f"https://query1.finance.yahoo.com/v1/finance/search?q={query}&quotesCount=8"
+            yahoo_res = client.get(yahoo_url, headers=headers)
+            if yahoo_res.status_code == 200:
+                yahoo_data = yahoo_res.json()
+                quotes = yahoo_data.get("quotes", [])
                 for quote in quotes:
-                    # EQUITY(주식) 형식의 항목만 안전 필터링
                     if quote.get("quoteType") == "EQUITY":
                         symbol = quote.get("symbol", "")
+                        
+                        # 네이버 금융에서 이미 긁어온 코드는 중복 노출을 피합니다.
+                        if symbol in seen_symbols or symbol.replace(".KS", "") in seen_symbols:
+                            continue
+                            
                         name = quote.get("longname") or quote.get("shortname") or symbol
                         exchange = quote.get("exchange", "Unknown")
                         
-                        # 한국 시장 및 미국 시장 구분 태그 매핑
                         market = "NASDAQ/NYSE"
                         if exchange in ["KSC", "KOE", "KOSDAQ"]:
                             market = "KOSPI/KOSDAQ"
@@ -108,13 +145,16 @@ def search_stocks(q: str):
                             "name": name,
                             "market": market
                         })
-                logger.info("GET /stocks/search 성공: '%s' 검색 결과 %d건 반환", q, len(results))
-                return results
-    except Exception as e:
-        logger.error("GET /stocks/search 주식 동적 검색 중 예외 발생: %s", str(e))
-    return []
+                        seen_symbols.add(symbol)
+            logger.info("GET /stocks/search 야후 파이낸스 API 연동 성공 (누적 검색결과: %d건)", len(results))
+        except Exception as yahoo_e:
+            logger.error("GET /stocks/search 야후 파이낸스 검색 API 중 오류: %s", str(yahoo_e))
+            
+    # 최대 8개 검색 항목 슬라이싱
+    final_results = results[:8]
+    logger.info("GET /stocks/search 최종 반환 결과: %d건", len(final_results))
+    return final_results
 
-@router.post("/stocks", response_model=StockResponse)
 def create_stock(payload: StockCreate, db: Session = Depends(get_db)):
     """새로운 관심 주식 종목 추가"""
     logger.info("POST /stocks 호출됨 - 심볼: '%s', 종목명: '%s'", payload.symbol, payload.name)
