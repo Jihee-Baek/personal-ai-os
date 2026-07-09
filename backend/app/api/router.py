@@ -70,7 +70,7 @@ def get_stocks(db: Session = Depends(get_db)):
 
 @router.get("/stocks/search")
 def search_stocks(q: str):
-    """야후 파이낸스 표준 API를 사용하여 하드코딩 없는 한글/영문 전세계 주식 실시간 검색"""
+    """야후 파이낸스 표준 API를 사용하여 하드코딩 없는 한글/영문 전세계 주식 실시간 검색 (이중 인코딩 해결)"""
     logger.info("GET /stocks/search 호출됨 - 검색어: '%s'", q)
     if not q or not q.strip():
         return []
@@ -79,19 +79,22 @@ def search_stocks(q: str):
     results = []
     
     import httpx
-    from urllib.parse import quote
     
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
     }
     
-    # 💡 [초안정 200 OK 표준 쿼리] 400 에러를 방지하기 위해 lang, region 파라미터를 배제합니다.
-    # 야후 Autocomplete 엔진은 한글 검색어를 퍼센트 인코딩해서 보내면 한글 longname/shortname과 한국 주식 매핑을 표준적으로 잘 수행합니다.
-    yahoo_url = f"https://query1.finance.yahoo.com/v1/finance/search?q={quote(query)}&quotesCount=8"
+    # 💡 [이중 인코딩 해결] URL에 직접 quote(query)를 넣지 않고 params 딕셔너리로 넘기면,
+    # httpx 라이브러리가 표준에 맞게 단 한 번만 깨끗하게 퍼센트 인코딩 처리를 수행하여 400 에러를 방지합니다.
+    yahoo_url = "https://query1.finance.yahoo.com/v1/finance/search"
+    query_params = {
+        "q": query,
+        "quotesCount": 8
+    }
     
     try:
         with httpx.Client(timeout=10.0) as client:
-            res = client.get(yahoo_url, headers=headers)
+            res = client.get(yahoo_url, params=query_params, headers=headers)
             if res.status_code == 200:
                 data = res.json()
                 quotes = data.get("quotes", [])
