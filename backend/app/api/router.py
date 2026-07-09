@@ -68,6 +68,52 @@ def get_stocks(db: Session = Depends(get_db)):
     # 실시간 시세 수집 후 리턴
     return finance_service.get_realtime_stocks(stock_payload)
 
+@router.get("/stocks/search")
+def search_stocks(q: str):
+    """야후 파이낸스 API를 경유하여 코스피/나스닥 등 전세계 실시간 종목 자동완성 검색"""
+    logger.info("GET /stocks/search 호출됨 - 검색어: '%s'", q)
+    if not q or not q.strip():
+        return []
+    try:
+        import httpx
+        # 야후 파이낸스 Autocomplete 검색 쿼리 전송 (최대 7개)
+        url = f"https://query1.finance.yahoo.com/v1/finance/search?q={q.strip()}&quotesCount=7"
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+        }
+        with httpx.Client(timeout=10.0) as client:
+            res = client.get(url, headers=headers)
+            if res.status_code == 200:
+                data = res.json()
+                quotes = data.get("quotes", [])
+                results = []
+                for quote in quotes:
+                    # EQUITY(주식) 형식의 항목만 안전 필터링
+                    if quote.get("quoteType") == "EQUITY":
+                        symbol = quote.get("symbol", "")
+                        name = quote.get("longname") or quote.get("shortname") or symbol
+                        exchange = quote.get("exchange", "Unknown")
+                        
+                        # 한국 시장 및 미국 시장 구분 태그 매핑
+                        market = "NASDAQ/NYSE"
+                        if exchange in ["KSC", "KOE", "KOSDAQ"]:
+                            market = "KOSPI/KOSDAQ"
+                        elif exchange in ["NMS", "NMS/NGS", "NYQ", "ASE"]:
+                            market = "NASDAQ/NYSE"
+                        else:
+                            market = exchange
+                            
+                        results.append({
+                            "symbol": symbol,
+                            "name": name,
+                            "market": market
+                        })
+                logger.info("GET /stocks/search 성공: '%s' 검색 결과 %d건 반환", q, len(results))
+                return results
+    except Exception as e:
+        logger.error("GET /stocks/search 주식 동적 검색 중 예외 발생: %s", str(e))
+    return []
+
 @router.post("/stocks", response_model=StockResponse)
 def create_stock(payload: StockCreate, db: Session = Depends(get_db)):
     """새로운 관심 주식 종목 추가"""
