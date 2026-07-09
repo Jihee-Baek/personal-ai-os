@@ -15,7 +15,7 @@ class GitHubService:
 
     def get_recent_events(self) -> List[GitHubEventItem]:
         # GITHUB_TOKEN이 감지되지 않거나 기본값일 경우 Fallback 데모 응답을 제공합니다.
-        if not self.token or self.token == "mock_github_token":
+        if not self.token or self.token in ["mock_github_token", "mock_token"]:
             logger.warning("GitHubService: 깃허브 토큰이 감지되지 않아 데모용 이벤트를 리턴합니다.")
             return [
                 GitHubEventItem(
