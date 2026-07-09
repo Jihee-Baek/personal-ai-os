@@ -83,8 +83,8 @@ class GPTProvider(BaseOpenRouterProvider):
     model_name = "google/gemma-2-9b-it:free"
 
 class GeminiProvider(BaseOpenRouterProvider):
-    """Google Gemini 2.0 Flash 무료 모델"""
-    model_name = "google/gemini-2.0-flash:free"
+    """Google Gemini 2.0 Flash Lite 무료 모델"""
+    model_name = "google/gemini-2.0-flash-lite-preview-v1:free"
 
 class DeepSeekProvider(BaseOpenRouterProvider):
     """DeepSeek 무료 대용 Llama 3 8B 무료 모델"""
