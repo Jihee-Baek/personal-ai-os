@@ -177,6 +177,7 @@ def search_stocks(q: str):
     logger.info("GET /stocks/search 최종 반환 결과: %d건", len(final_results))
     return final_results
 
+@router.post("/stocks", response_model=StockResponse)
 def create_stock(payload: StockCreate, db: Session = Depends(get_db)):
     """새로운 관심 주식 종목 추가"""
     logger.info("POST /stocks 호출됨 - 심볼: '%s', 종목명: '%s'", payload.symbol, payload.name)
