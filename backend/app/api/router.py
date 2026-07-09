@@ -1,4 +1,5 @@
 import logging
+from datetime import datetime
 from fastapi import APIRouter, HTTPException, Depends
 from typing import List
 from sqlalchemy.orm import Session
@@ -7,18 +8,26 @@ from app.core.database import get_db
 from app.models.todo import Todo
 from app.models.memo import Memo
 from app.models.stock import UserStock
-from app.schemas.api_schemas import WeatherResponse, StockItem, ExchangeItem, ChatRequest, ChatResponse
+from app.schemas.api_schemas import (
+    WeatherResponse, StockItem, ExchangeItem, ChatRequest, ChatResponse,
+    GitHubEventItem, BriefingResponse
+)
 from app.schemas.todo_schemas import TodoCreate, TodoUpdate, TodoResponse
 from app.schemas.memo_schemas import MemoCreate, MemoResponse
 from app.schemas.stock_schemas import StockCreate, StockResponse
+
 from app.services.ai_service import AIService
 from app.services.weather_service import WeatherService
 from app.services.finance_service import FinanceService
+from app.services.github_service import GitHubService
+from app.services.briefing_service import BriefingService
 
 router = APIRouter()
 ai_service = AIService()
 weather_service = WeatherService()
 finance_service = FinanceService()
+github_service = GitHubService()
+briefing_service = BriefingService(ai_service, weather_service, finance_service, github_service)
 logger = logging.getLogger(__name__)
 
 @router.get("/health")
@@ -198,3 +207,23 @@ def post_chat(payload: ChatRequest):
     except ValueError as e:
         logger.error("POST /chat 에러 발생: %s", str(e))
         raise HTTPException(status_code=400, detail=str(e))
+
+# ----------------- 실시간 GitHub 최근 활동 API -----------------
+
+@router.get("/github/events", response_model=List[GitHubEventItem])
+def get_github_events():
+    """GitHub API 연동을 통한 최근 사용자 개발 이벤트 내역 조회"""
+    logger.info("GET /github/events 호출됨")
+    return github_service.get_recent_events()
+
+# ----------------- 오늘의 AI 종합 브리핑 API -----------------
+
+@router.get("/briefing", response_model=BriefingResponse)
+def get_daily_briefing(db: Session = Depends(get_db)):
+    """날씨, 환율, 주식, 일정, 메모, GitHub 활동을 종합 요약한 오늘의 브리핑 생성"""
+    logger.info("GET /briefing 호출됨 (종합 일일 브리핑 리포트 요청)")
+    briefing_content = briefing_service.generate_daily_briefing(db)
+    
+    # ISO 형식의 타임스탬프로 생성 시각 반환
+    current_time_str = datetime.now().isoformat()
+    return BriefingResponse(content=briefing_content, created_at=current_time_str)

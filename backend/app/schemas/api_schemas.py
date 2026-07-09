@@ -34,3 +34,15 @@ class ChatRequest(BaseModel):
 class ChatResponse(BaseModel):
     reply: str
     provider: str
+
+class GitHubEventItem(BaseModel):
+    """GitHub 사용자 활동 로그 스키마"""
+    type: str # 이벤트 종류 (예: PushEvent, PR 등)
+    repo: str # 관련 레포지토리명
+    message: str # 상세 요약 내용 (예: 커밋 메시지)
+    created_at: str # 발생 시각
+
+class BriefingResponse(BaseModel):
+    """종합 일일 AI 브리핑 스키마"""
+    content: str # AI가 분석 요약한 한글 리포트
+    created_at: str # 생성 일시
