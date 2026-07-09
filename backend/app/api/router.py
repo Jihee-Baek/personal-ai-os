@@ -70,7 +70,7 @@ def get_stocks(db: Session = Depends(get_db)):
 
 @router.get("/stocks/search")
 def search_stocks(q: str):
-    """야후 파이낸스 한국 로컬라이징 API(lang=ko-KR, region=KR)를 사용하여 하드코딩 없는 한글/영문 전세계 주식 검색"""
+    """야후 파이낸스 표준 API를 사용하여 하드코딩 없는 한글/영문 전세계 주식 실시간 검색"""
     logger.info("GET /stocks/search 호출됨 - 검색어: '%s'", q)
     if not q or not q.strip():
         return []
@@ -85,9 +85,9 @@ def search_stocks(q: str):
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
     }
     
-    # 💡 [초안정 글로벌 통합 검색] 한국 시장 로컬라이징 파라미터를 추가하여 한글 검색어 해석 보장
-    # lang=ko-KR 및 region=KR을 적용하면 야후 금융 인프라에서 한글 매핑 결과를 최우선 분석해 돌려줍니다.
-    yahoo_url = f"https://query1.finance.yahoo.com/v1/finance/search?q={quote(query)}&lang=ko-KR&region=KR&quotesCount=10"
+    # 💡 [초안정 200 OK 표준 쿼리] 400 에러를 방지하기 위해 lang, region 파라미터를 배제합니다.
+    # 야후 Autocomplete 엔진은 한글 검색어를 퍼센트 인코딩해서 보내면 한글 longname/shortname과 한국 주식 매핑을 표준적으로 잘 수행합니다.
+    yahoo_url = f"https://query1.finance.yahoo.com/v1/finance/search?q={quote(query)}&quotesCount=8"
     
     try:
         with httpx.Client(timeout=10.0) as client:
@@ -99,11 +99,11 @@ def search_stocks(q: str):
                     if quote_item.get("quoteType") == "EQUITY":
                         symbol = quote_item.get("symbol", "")
                         
-                        # 야후 한글 검색 시 longname 또는 shortname에 한글 정식 종목명이 실려 반환됩니다.
+                        # 야후 한글 검색 시 longname 또는 shortname에 한글 정식 종목명이 포함되어 반환됩니다.
                         name = quote_item.get("longname") or quote_item.get("shortname") or symbol
                         exchange = quote_item.get("exchange", "Unknown")
                         
-                        # 한국 시장 및 미국 시장 태그 정제
+                        # 한국 시장 및 미국 시장 태그 구분
                         market = "NASDAQ/NYSE"
                         if exchange in ["KSC", "KOE", "KOSDAQ"]:
                             market = "KOSPI/KOSDAQ"
@@ -118,6 +118,8 @@ def search_stocks(q: str):
                             "market": market
                         })
                 logger.info("GET /stocks/search 야후 API 연동 성공 (검색결과: %d건)", len(results))
+            else:
+                logger.error("GET /stocks/search 야후 API 실패 - 상태코드: %d, 응답: %s", res.status_code, res.text)
     except Exception as e:
         logger.error("GET /stocks/search 야후 API 검색 중 예외 발생: %s", str(e))
         
