@@ -79,3 +79,21 @@ body {
 ::-webkit-scrollbar-thumb:hover {
   background: hsl(var(--muted-foreground));
 }
+
+/* 🚆 기차 창밖 가로 무한 루핑 스크롤 */
+@keyframes scrollLandscape {
+  0% { background-position-x: 0px; }
+  100% { background-position-x: -1600px; }
+}
+
+/* 🧚 AI 동반자 정령/오브젝트 둥둥 뜨기 */
+@keyframes gentleFloat {
+  0%, 100% { transform: translateY(0px) rotate(0deg); }
+  50% { transform: translateY(-5px) rotate(1.5deg); }
+}
+
+/* 📻 음표 파티클 방출 모션 */
+@keyframes musicNotes {
+  0%, 100% { transform: translateY(0px) scale(0.7); opacity: 0; }
+  50% { transform: translateY(-12px) scale(1.1); opacity: 1; }
+}
