@@ -87,9 +87,8 @@ def search_stocks(q: str):
     with httpx.Client(timeout=10.0) as client:
         # 1단계: 🇰🇷 네이버 금융 실시간 자동완성 API 호출 (한국 주식 종목명 검색 완벽 보장)
         try:
-            naver_url = f"https://ac.finance.naver.com/ac?q={httpx.URLExpression(query)}&q_enc=utf-8&st=1&frm=stock&r_format=json&r_enc=utf-8&r_unicode=0&t_koreng=1"
-            # URLExpression 대신 간단한 f-string 쿼리 인코딩 우회
-            naver_url_enc = f"https://ac.finance.naver.com/ac?q={query}&q_enc=utf-8&st=1&frm=stock&r_format=json&r_enc=utf-8&r_unicode=0&t_koreng=1"
+            from urllib.parse import quote
+            naver_url_enc = f"https://ac.finance.naver.com/ac?q={quote(query)}&q_enc=utf-8&st=1&frm=stock&r_format=json&r_enc=utf-8&r_unicode=0&t_koreng=1"
             naver_res = client.get(naver_url_enc, headers=headers)
             if naver_res.status_code == 200:
                 naver_data = naver_res.json()
