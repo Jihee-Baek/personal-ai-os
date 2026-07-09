@@ -78,10 +78,16 @@ class GitHubService:
                         
                         if ev_type == "PushEvent":
                             commits = payload.get("commits", [])
+                            branch_ref = payload.get("ref", "")
+                            branch_name = branch_ref.split("/")[-1] if branch_ref else "main"
+                            
                             if commits:
-                                msg = f"commit: {commits[0].get('message', 'Push 완료')}"
+                                commit_msg = commits[0].get('message', '').strip()
+                                # 커밋 메시지가 줄바꿈을 가질 수 있으므로 첫째 줄만 깔끔하게 추출합니다.
+                                commit_first_line = commit_msg.split('\n')[0] if commit_msg else 'Push 완료'
+                                msg = f"commit: {commit_first_line}"
                             else:
-                                msg = "코드 Push 완료"
+                                msg = f"코드 Push 완료 ({branch_name} 브랜치)"
                                 
                         elif ev_type == "PullRequestEvent":
                             action = payload.get("action", "updated")
