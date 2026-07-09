@@ -9,7 +9,7 @@ logger = logging.getLogger(__name__)
 class GitHubService:
     """
     GitHub REST API를 호출하여 최근 사용자의 개발 활동(커밋, PR 등)을 수집하는 서비스
-    (상세 이벤트 대응 및 커밋 메시지 강제 복구 폴백 탑재)
+    (개별 커밋 SHA 매핑을 통한 고유 커밋 메시지 복원 탑재)
     """
     def __init__(self):
         self.token = settings.GITHUB_TOKEN
@@ -81,37 +81,37 @@ class GitHubService:
                             commits = payload.get("commits", [])
                             branch_ref = payload.get("ref", "")
                             branch_name = branch_ref.split("/")[-1] if branch_ref else "main"
+                            head_sha = payload.get("head") # 이 푸시 시점의 고유 헤드 커밋 해시(SHA)
                             
                             if commits:
                                 commit_msg = commits[0].get('message', '').strip()
                                 commit_first_line = commit_msg.split('\n')[0] if commit_msg else 'Push 완료'
                                 msg = f"commit: {commit_first_line}"
-                            else:
-                                # 💡 [프리미엄 핵심 보안 폴백] commits 목록이 깃허브 API 필터링에 의해 생략된 경우,
-                                # 해당 레포지토리의 Commits List API를 직접 호출해 최신 실제 커밋 메시지를 동적 조회합니다.
+                            elif head_sha:
+                                # 💡 [프리미엄 정밀 고유 매핑] commits 목록이 없더라도 head_sha(헤드 해시)를 사용하여
+                                # 해당 푸시 시점의 진짜 고유 커밋 메시지를 깃허브 REST API로 1:1 역추적 조회합니다.
                                 try:
-                                    logger.info("GitHubService: PushEvent 내 commits가 비어있어 최신 커밋 이력을 직접 조회합니다. (레포: %s)", repo_name)
-                                    commit_api_url = f"https://api.github.com/repos/{repo_name}/commits"
-                                    commits_res = client.get(commit_api_url, headers=headers)
+                                    logger.info("GitHubService: PushEvent 내 commits 생략 감지 -> head_sha(%s) 기준 고유 커밋 직접 조회", head_sha)
+                                    commit_api_url = f"https://api.github.com/repos/{repo_name}/commits/{head_sha}"
+                                    commit_res = client.get(commit_api_url, headers=headers)
                                     
-                                    if commits_res.status_code == 200:
-                                        repo_commits = commits_res.json()
-                                        if repo_commits:
-                                            raw_msg = repo_commits[0].get("commit", {}).get("message", "").strip()
-                                            first_line = raw_msg.split('\n')[0] if raw_msg else ""
-                                            if first_line:
-                                                msg = f"commit: {first_line}"
-                                                logger.info("GitHubService: 동적 커밋 조회 성공 -> %s", msg)
-                                            else:
-                                                msg = f"코드 Push 완료 ({branch_name} 브랜치)"
+                                    if commit_res.status_code == 200:
+                                        commit_data = commit_res.json()
+                                        raw_msg = commit_data.get("commit", {}).get("message", "").strip()
+                                        first_line = raw_msg.split('\n')[0] if raw_msg else ""
+                                        if first_line:
+                                            msg = f"commit: {first_line}"
+                                            logger.info("GitHubService: 고유 커밋 메시지 역추적 성공 -> %s", msg)
                                         else:
                                             msg = f"코드 Push 완료 ({branch_name} 브랜치)"
                                     else:
-                                        logger.warning("GitHubService: 커밋 이력 직접 조회 실패 (코드: %d) -> 폴백 메시지 반환", commits_res.status_code)
+                                        logger.warning("GitHubService: 고유 커밋 조회 API 실패 (코드: %d) -> 폴백 메시지 반환", commit_res.status_code)
                                         msg = f"코드 Push 완료 ({branch_name} 브랜치)"
                                 except Exception as inner_e:
-                                    logger.error("GitHubService: 커밋 이력 직접 조회 도중 예외 발생: %s", str(inner_e))
+                                    logger.error("GitHubService: 고유 커밋 조회 중 예외 발생: %s", str(inner_e))
                                     msg = f"코드 Push 완료 ({branch_name} 브랜치)"
+                            else:
+                                msg = f"코드 Push 완료 ({branch_name} 브랜치)"
                                 
                         elif ev_type == "PullRequestEvent":
                             action = payload.get("action", "updated")
