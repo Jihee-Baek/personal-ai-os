@@ -62,8 +62,8 @@ def get_stocks(db: Session = Depends(get_db)):
     # DB에 저장된 사용자의 관심 주식 심볼 리스트 수집
     db_stocks = db.query(UserStock).order_by(UserStock.created_at.asc()).all()
     
-    # 서비스에 전달할 형식인 [{"symbol": ..., "name": ...}] 구조로 변환
-    stock_payload = [{"symbol": s.symbol, "name": s.name} for s in db_stocks]
+    # 서비스에 전달할 형식인 [{"id": ..., "symbol": ..., "name": ...}] 구조로 변환
+    stock_payload = [{"id": s.id, "symbol": s.symbol, "name": s.name} for s in db_stocks]
     
     # 실시간 시세 수집 후 리턴
     return finance_service.get_realtime_stocks(stock_payload)

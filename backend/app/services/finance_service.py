@@ -51,10 +51,10 @@ class FinanceService:
             ExchangeItem(currency="EUR", rate=1492.8, change=0.0, change_percent=0.0)
         ]
 
-    def get_realtime_stocks(self, db_stocks: List[Dict[str, str]]) -> List[StockItem]:
+    def get_realtime_stocks(self, db_stocks: List[Dict[str, Any]]) -> List[StockItem]:
         """
         데이터베이스에 저장된 심볼들을 순회하여 yfinance로 실시간 가격 정보를 가져옵니다.
-        db_stocks 형식: [{"symbol": "005930.KS", "name": "삼성전자"}, ...]
+        db_stocks 형식: [{"id": 1, "symbol": "005930.KS", "name": "삼성전자"}, ...]
         """
         results: List[StockItem] = []
         
@@ -65,6 +65,7 @@ class FinanceService:
         logger.info("FinanceService: 등록된 %d개 종목에 대한 yfinance 실시간 주가 수집 시작", len(db_stocks))
 
         for stock in db_stocks:
+            stock_id = stock.get("id")
             symbol = stock["symbol"]
             name = stock["name"]
             
@@ -82,6 +83,7 @@ class FinanceService:
                     
                     logger.info("FinanceService: 주가 수집 성공 - %s (%s): %.2f", name, symbol, current_price)
                     results.append(StockItem(
+                        id=stock_id,
                         symbol=symbol,
                         name=name,
                         price=round(current_price, 2),
@@ -92,6 +94,7 @@ class FinanceService:
                     # 데이터가 1일치만 들어온 경우 (신규 상장 등)
                     current_price = float(hist["Close"].iloc[0])
                     results.append(StockItem(
+                        id=stock_id,
                         symbol=symbol,
                         name=name,
                         price=round(current_price, 2),
@@ -102,6 +105,7 @@ class FinanceService:
                     # 데이터가 들어오지 않은 경우 기본값 폴백
                     logger.warning("FinanceService: yfinance 데이터 조회 결과가 비어있음 (%s)", symbol)
                     results.append(StockItem(
+                        id=stock_id,
                         symbol=symbol,
                         name=name,
                         price=0.0,
@@ -112,6 +116,7 @@ class FinanceService:
                 logger.error("FinanceService: 주식 수집 오류 발생 (%s): %s", symbol, str(e))
                 # 특정 한 종목이 조회가 안 되더라도 다른 종목 조회를 유지하기 위해 에러를 기록하고 기본 0값 처리
                 results.append(StockItem(
+                    id=stock_id,
                     symbol=symbol,
                     name=name,
                     price=0.0,

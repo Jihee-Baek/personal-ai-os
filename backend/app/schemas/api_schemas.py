@@ -9,6 +9,7 @@ class WeatherResponse(BaseModel):
     wind_speed: float
 
 class StockItem(BaseModel):
+    id: Optional[int] = None # 관심 주식 고유 ID (삭제용)
     symbol: str
     name: str
     price: float
