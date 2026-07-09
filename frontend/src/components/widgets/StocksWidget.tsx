@@ -149,9 +149,9 @@ export default function StocksWidget() {
                 return (
                   <div key={stock.symbol} className="flex justify-between items-center bg-muted/20 p-2 rounded-md border border-border/10">
                     <div className="min-w-0 flex-1">
-                      <div className="flex items-center gap-1.5">
-                        <span className="text-xs font-bold text-foreground truncate">{stock.symbol}</span>
-                        <span className="text-[9px] text-muted-foreground truncate">{stock.name}</span>
+                      <div className="flex flex-col">
+                        <span className="text-xs font-bold text-foreground truncate">{stock.name}</span>
+                        <span className="text-[9px] text-muted-foreground truncate">{stock.symbol}</span>
                       </div>
                       <span className="text-[11px] font-semibold text-foreground/90 block mt-0.5">
                         {stock.price > 0 ? `${stock.price.toLocaleString('ko-KR')}원` : '시황 로드 실패'}
