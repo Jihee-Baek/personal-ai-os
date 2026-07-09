@@ -16,7 +16,7 @@ logger = logging.getLogger(__name__)
 class BriefingService:
     """
     날씨, 주식, 일정, 메모, GitHub 활동 정보를 통합하여
-    LLM AI가 분석/작성한 종합 일일 브리핑 리포트를 제공하는 서비스 (장애 극복 설계 탑재)
+    LLM AI가 분석/작성한 종합 일일 브리핑 리포트를 제공하는 서비스 (상세 로깅 탑재)
     """
     def __init__(self, ai_service: AIService, weather_service: WeatherService, 
                  finance_service: FinanceService, github_service: GitHubService):
@@ -26,26 +26,31 @@ class BriefingService:
         self.github = github_service
 
     def generate_daily_briefing(self, db: Session) -> str:
-        logger.info("BriefingService: 종합 AI 일일 브리핑을 위한 데이터 취합 시작")
+        logger.info("BriefingService: 오늘의 AI 종합 브리핑 데이터 취합을 개시합니다.")
         
-        # 1단계: 날씨 수집 (독립 예외 처리)
+        # 1단계: 날씨 수집
         try:
+            logger.info("BriefingService: 1단계 - 실시간 날씨 데이터 수집")
             weather_data = self.weather.get_current_weather()
             weather_desc = f"지역: {weather_data.location}, 기온: {weather_data.temperature}°C, 상태: {weather_data.condition}, 습도: {weather_data.humidity}%, 풍속: {weather_data.wind_speed}m/s"
+            logger.info("BriefingService: 1단계 날씨 취합 완료 -> %s", weather_desc)
         except Exception as e:
             logger.error("BriefingService: 날씨 정보 취합 중 에러 발생: %s", str(e))
             weather_desc = "날씨 정보를 불러오는 데 실패했습니다."
 
-        # 2단계: 환율 정보 수집 (독립 예외 처리)
+        # 2단계: 환율 정보 수집
         try:
+            logger.info("BriefingService: 2단계 - 실시간 외환 고시 환율 데이터 수집")
             exchange_list = self.finance.get_realtime_exchange()
             exchange_desc = ", ".join([f"{ex.currency}: {ex.rate}원" for ex in exchange_list])
+            logger.info("BriefingService: 2단계 환율 취합 완료 -> %s", exchange_desc)
         except Exception as e:
             logger.error("BriefingService: 환율 정보 취합 중 에러 발생: %s", str(e))
             exchange_desc = "환율 정보를 불러오는 데 실패했습니다."
 
-        # 3단계: 관심 주식 수집 및 DB 연동 (DB 장애 격리 처리)
+        # 3단계: 관심 주식 수집 및 DB 연동
         try:
+            logger.info("BriefingService: 3단계 - 관심 주식 DB 조회 및 실시간 주가 취합")
             db_stocks = db.query(UserStock).all()
             stock_payload = [{"symbol": s.symbol, "name": s.name} for s in db_stocks]
             stock_list = self.finance.get_realtime_stocks(stock_payload)
@@ -53,40 +58,47 @@ class BriefingService:
                 stock_desc = ", ".join([f"{st.name}({st.symbol}): {st.price}원 ({st.change_percent}%)" for st in stock_list])
             else:
                 stock_desc = "등록된 관심 주식 종목이 없습니다."
+            logger.info("BriefingService: 3단계 주가 시황 취합 완료 -> %s", stock_desc)
         except Exception as e:
-            logger.error("BriefingService: 주식 및 DB 조회 중 에러 발생 (폴백 적용): %s", str(e))
+            logger.error("BriefingService: 주식 및 DB 조회 중 에러 발생: %s", str(e))
             stock_desc = "데이터베이스 연결 오류로 인해 주식 시황을 가져오지 못했습니다."
 
-        # 4단계: 일정(Todo) 수집 (DB 장애 격리 처리)
+        # 4단계: 일정(Todo) 수집
         try:
+            logger.info("BriefingService: 4단계 - 미완료 할 일 일정 DB 조회")
             todos = db.query(Todo).filter(Todo.completed == False).order_by(Todo.created_at.asc()).all()
             if todos:
                 todo_desc = "\n".join([f"- {t.title} (기한: {t.due_date or '없음'}, 반복: {t.recurrence})" for t in todos])
             else:
                 todo_desc = "남아 있는 오늘 일정이 없습니다. 가뿐한 하루네요!"
+            logger.info("BriefingService: 4단계 일정 취합 완료 (미완료: %d건)", len(todos))
         except Exception as e:
-            logger.error("BriefingService: 할일 목록 DB 조회 중 에러 발생 (폴백 적용): %s", str(e))
+            logger.error("BriefingService: 할일 목록 DB 조회 중 에러 발생: %s", str(e))
             todo_desc = "데이터베이스 연결 오류로 인해 오늘의 일정을 가져오지 못했습니다."
             todos = []
 
-        # 5단계: 최근 메모(Memo) 수집 (DB 장애 격리 처리)
+        # 5단계: 최근 메모(Memo) 수집
         try:
+            logger.info("BriefingService: 5단계 - 최근 빠른 메모 DB 조회")
             memos = db.query(Memo).order_by(Memo.created_at.desc()).limit(3).all()
             if memos:
                 memo_desc = "\n".join([f"- {m.content[:50]}" for m in memos])
             else:
                 memo_desc = "기록된 최근 메모가 없습니다."
+            logger.info("BriefingService: 5단계 메모 취합 완료 (조회건: %d건)", len(memos))
         except Exception as e:
-            logger.error("BriefingService: 메모 DB 조회 중 에러 발생 (폴백 적용): %s", str(e))
+            logger.error("BriefingService: 메모 DB 조회 중 에러 발생: %s", str(e))
             memo_desc = "데이터베이스 연결 오류로 인해 최근 메모 정보를 가져오지 못했습니다."
 
-        # 6단계: GitHub 활동 수집 (독립 예외 처리)
+        # 6단계: GitHub 활동 수집
         try:
+            logger.info("BriefingService: 6단계 - 최근 개발 깃 활동 정보 수집")
             github_events = self.github.get_recent_events()
             if github_events:
                 github_desc = "\n".join([f"- [{ev.type}] {ev.repo}: {ev.message}" for ev in github_events[:3]])
             else:
                 github_desc = "최근 깃허브 개발 활동 이력이 없습니다."
+            logger.info("BriefingService: 6단계 깃허브 활동 취합 완료 -> %s", github_desc)
         except Exception as e:
             logger.error("BriefingService: GitHub 활동 정보 취합 중 에러 발생: %s", str(e))
             github_desc = "GitHub 통신 오류로 인해 최근 이력을 가져오지 못했습니다."
@@ -117,12 +129,12 @@ class BriefingService:
 주의사항: 사용자가 기분 좋게 하루를 시작할 수 있도록 밝고 희망찬 멘트로 마무리해 주세요. 출력은 한국어로만 해주세요.
 """
 
-        logger.info("BriefingService: AI 분석 요약 질의 요청 송신")
+        logger.info("BriefingService: 5대 핵심 요소 데이터 전처리 완료 -> LLM 요약 질의 요청 전송")
         
         try:
             # OpenRouter AI에 비서 프롬프트 질의
             reply = self.ai.chat(prompt)
-            logger.info("BriefingService: AI 종합 브리핑 작성 수신 성공")
+            logger.info("BriefingService: LLM 종합 브리핑 작성 수신 완료 (글자수: %d자)", len(reply))
             return reply
         except Exception as e:
             logger.error("BriefingService: AI 브리핑 LLM 통신 실패로 백업용 텍스트 생성: %s", str(e))
