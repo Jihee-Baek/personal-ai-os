@@ -11,6 +11,7 @@ import {
   Play, Square, AlertCircle, Train, RotateCcw
 } from 'lucide-react';
 import TransparentImage from './TransparentImage';
+import WeatherParticleOverlay, { WeatherType } from './WeatherParticleOverlay';
 
 // 9대 소품 위젯 컴포넌트 임포트
 import DailyBriefingWidget from '../widgets/DailyBriefingWidget';
@@ -31,7 +32,7 @@ interface TodoItem {
   completed: boolean;
 }
 
-// 🛡️ 런타임 세이프티 가드용 기본값 정의 (로컬스토리지 누락 대비 병합용)
+// 🛡️ 런타임 세이프티 가드용 기본값 정의
 const DEFAULT_ICON_POSITIONS: Record<WidgetType, { x: number; y: number }> = {
   weather: { x: 32, y: 110 },
   todos: { x: 32, y: 171 },
@@ -122,7 +123,7 @@ export default function CabinScene() {
       });
     }, 1000);
 
-    // 🛡️ 로컬스토리지 덮어쓰기 시 구버전 유저 데이터 누락 방지를 위한 안전 병합(Merge) 복원
+    // 로컬스토리지 복원
     try {
       const savedPins = localStorage.getItem('cabin_pinned_widgets');
       const savedPositions = localStorage.getItem('cabin_widget_positions');
@@ -254,7 +255,7 @@ export default function CabinScene() {
     localStorage.setItem('cabin_icon_positions', JSON.stringify(updatedIcons));
   };
 
-  // 12. 🧹 배치 및 핀 상태 초기화 (좌측 세로 정렬 및 하단 계기판 복구)
+  // 12. 🧹 배치 및 핀 상태 초기화
   const resetLayout = () => {
     setIconPositions(DEFAULT_ICON_POSITIONS);
     localStorage.setItem('cabin_icon_positions', JSON.stringify(DEFAULT_ICON_POSITIONS));
@@ -266,8 +267,58 @@ export default function CabinScene() {
     localStorage.setItem('cabin_widget_positions', JSON.stringify(DEFAULT_WIDGET_POSITIONS));
   };
 
-  // 12.5. 시간대별 객실 내부 조명 톤 (오버레이)
+  // 12.5. 날씨 연동 실시간 Weather API 데이터 로드
+  const { data: weatherData } = useQuery<{ condition: string }>({
+    queryKey: ['weather'],
+    queryFn: () => fetchFromAPI('/weather'),
+    refetchInterval: 15 * 60 * 1000, // 15분 마다 백엔드 날씨 데이터 갱신
+  });
+
+  // 날씨 조건 문자열 파싱하여 4대 상태로 표준 정규화
+  const getWeatherCondition = (): WeatherType => {
+    if (!weatherData?.condition) return 'Clear';
+    const cond = weatherData.condition.toLowerCase();
+    
+    if (cond.includes('비') || cond.includes('실비') || cond.includes('소나기') || cond.includes('rain') || cond.includes('drizzle') || cond.includes('shower')) {
+      return 'Rainy';
+    }
+    if (cond.includes('눈') || cond.includes('진눈깨비') || cond.includes('snow') || cond.includes('sleet')) {
+      return 'Snowy';
+    }
+    if (cond.includes('흐림') || cond.includes('구름') || cond.includes('안개') || cond.includes('박무') || cond.includes('연무') || cond.includes('cloud') || cond.includes('mist') || cond.includes('fog') || cond.includes('haze')) {
+      return 'Cloudy';
+    }
+    return 'Clear';
+  };
+
+  const weatherCondition = getWeatherCondition();
+
+  // 날씨에 맞춰 창밖 Parallax 풍경의 명도/채도/필터 제어
+  const getWindowFilter = () => {
+    switch (weatherCondition) {
+      case 'Rainy':
+        return 'brightness(0.35) saturate(0.65) contrast(1.1) hue-rotate(15deg)'; // 우중충한 파란 톤
+      case 'Snowy':
+        return 'brightness(0.75) grayscale(0.45) contrast(0.9)'; // 희뿌연 화이트아웃 톤
+      case 'Cloudy':
+        return 'brightness(0.5) grayscale(0.5) contrast(0.95)'; // 어두운 회색 톤
+      case 'Clear':
+      default:
+        return 'brightness(0.9) saturate(1.0) contrast(1.0)'; // 원본 유지
+    }
+  };
+
+  // 날씨와 시간에 따라 유기적으로 반응하는 실내 조명 톤 (오버레이)
   const getLightingOverlay = () => {
+    // 1순위: 악천후에 따른 조도 보정
+    if (weatherCondition === 'Rainy') {
+      return 'bg-indigo-950/25 mix-blend-multiply'; // 비오는 날 어두운 침침함
+    }
+    if (weatherCondition === 'Cloudy') {
+      return 'bg-slate-800/15 mix-blend-multiply'; // 흐린 날 뿌연 어두움
+    }
+
+    // 2순위: 맑을 때 시간대별 객실 색조
     switch (timeOfDay) {
       case 'morning':
         return 'bg-amber-500/10 mix-blend-color-burn'; 
@@ -429,15 +480,23 @@ export default function CabinScene() {
           {/* 기차 객실 일러스트 컨테이너 (3:2 비율 유지 cover) */}
           <div className="w-full h-full min-w-full min-h-full relative aspect-[3/2] bg-cover bg-center" style={{ backgroundImage: `url('/train_cabin_bg.png')` }}>
             
-            {/* 🏙️ [레이어 1]: 창문 영역 뒤 빌딩 실루엣 */}
+            {/* 🏙️ [레이어 1]: 창문 영역 뒤 빌딩 실루엣 (Parallax 및 날씨 오버레이 통합) */}
             <div className="absolute top-[4.5%] left-[12.2%] w-[59.3%] h-[62.5%] overflow-hidden z-0 bg-sky-950">
               <div 
                 className="w-[200%] h-full bg-cover bg-repeat-x animate-[scrollLandscape_65s_linear_infinite]"
                 style={{ 
                   backgroundImage: `url('/sky_city_scenery.jpg')`,
-                  animationPlayState: isTrainMoving ? 'running' : 'paused' 
+                  animationPlayState: isTrainMoving ? 'running' : 'paused',
+                  filter: getWindowFilter()
                 }}
               />
+              
+              {/* 🌧️❄️☀️ 실시간 날씨 연동 Canvas 파티클 오버레이 레이어 도킹 */}
+              <WeatherParticleOverlay 
+                condition={weatherCondition} 
+                isTrainMoving={isTrainMoving} 
+              />
+
               <div className="absolute inset-0 bg-gradient-to-tr from-white/5 via-transparent to-white/10 mix-blend-overlay pointer-events-none" />
             </div>
 
@@ -447,7 +506,7 @@ export default function CabinScene() {
               style={{ backgroundImage: `url('/train_cabin_bg.png')` }}
             />
 
-            {/* 🎛️ [레이어 3]: 드래그 및 클릭이 가능한 9대 사물 소품 아이콘 (안전 가드 주입) */}
+            {/* 🎛️ [레이어 3]: 드래그 및 클릭이 가능한 9대 사물 소품 아이콘 */}
             
             {/* 1. 벽시계 소품 */}
             <motion.div 
