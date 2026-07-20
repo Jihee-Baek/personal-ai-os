@@ -9,12 +9,14 @@ class WeatherResponse(BaseModel):
     wind_speed: float
 
 class StockItem(BaseModel):
-    id: Optional[int] = None # 관심 주식 고유 ID (삭제용)
+    id: Optional[int] = None # 관심 주식 고유 ID
     symbol: str
     name: str
     price: float
     change: float
     change_percent: float
+    quantity: float = 1.0
+    avg_buy_price: float = 0.0
 
 class ExchangeItem(BaseModel):
     currency: str
@@ -38,12 +40,12 @@ class ChatResponse(BaseModel):
 
 class GitHubEventItem(BaseModel):
     """GitHub 사용자 활동 로그 스키마"""
-    type: str # 이벤트 종류 (예: PushEvent, PR 등)
-    repo: str # 관련 레포지토리명
-    message: str # 상세 요약 내용 (예: 커밋 메시지)
-    created_at: str # 발생 시각
+    type: str
+    repo: str
+    message: str
+    created_at: str
 
 class BriefingResponse(BaseModel):
     """종합 일일 AI 브리핑 스키마"""
-    content: str # AI가 분석 요약한 한글 리포트
-    created_at: str # 생성 일시
+    content: str
+    created_at: str

@@ -1,21 +1,29 @@
+import logging
 from sqlalchemy import create_engine
 from sqlalchemy.orm import declarative_base, sessionmaker
 from app.core.config import settings
 
-# SQLAlchemy 데이터베이스 접속 엔진 생성
-# pool_pre_ping은 주기적으로 데이터베이스와의 연결 상태를 체크합니다.
-engine = create_engine(
-    settings.DATABASE_URL,
-    pool_pre_ping=True,
-)
+logger = logging.getLogger(__name__)
 
-# 데이터베이스 트랜잭션 세션 생성 팩토리
+db_url = settings.DATABASE_URL
+connect_args = {}
+
+if "sqlite" in db_url:
+    connect_args = {"check_same_thread": False}
+
+try:
+    engine = create_engine(db_url, pool_pre_ping=True, connect_args=connect_args)
+    with engine.connect() as conn:
+        pass
+except Exception as e:
+    logger.warning("기본 DB 접속 실패 (%s). 로컬 SQLite 백업 DB(sqlite:///./personal_ai_os.db)로 전환합니다.", str(e))
+    db_url = "sqlite:///./personal_ai_os.db"
+    connect_args = {"check_same_thread": False}
+    engine = create_engine(db_url, pool_pre_ping=True, connect_args=connect_args)
+
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
-
-# 선언적 모델 Base 클래스
 Base = declarative_base()
 
-# FastAPI 의존성용 DB 세션 라이프사이클 관리 제너레이터
 def get_db():
     db = SessionLocal()
     try:

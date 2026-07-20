@@ -1,8 +1,10 @@
 import logging
 from datetime import datetime
-from fastapi import APIRouter, HTTPException, Depends
-from typing import List
+from fastapi import APIRouter, HTTPException, Depends, Query
+from typing import List, Dict, Any
 from sqlalchemy.orm import Session
+import pandas as pd
+import httpx
 
 from app.core.database import get_db
 from app.models.todo import Todo
@@ -14,7 +16,9 @@ from app.schemas.api_schemas import (
 )
 from app.schemas.todo_schemas import TodoCreate, TodoUpdate, TodoResponse
 from app.schemas.memo_schemas import MemoCreate, MemoResponse
-from app.schemas.stock_schemas import StockCreate, StockResponse
+from app.schemas.stock_schemas import (
+    StockCreate, StockUpdate, StockResponse, StockPortfolioResponse, StockChartResponse
+)
 
 from app.services.ai_service import AIService
 from app.services.weather_service import WeatherService
@@ -22,72 +26,69 @@ from app.services.finance_service import FinanceService
 from app.services.github_service import GitHubService
 from app.services.briefing_service import BriefingService
 
+logger = logging.getLogger(__name__)
+
 router = APIRouter()
 ai_service = AIService()
 weather_service = WeatherService()
 finance_service = FinanceService()
 github_service = GitHubService()
 briefing_service = BriefingService(ai_service, weather_service, finance_service, github_service)
-logger = logging.getLogger(__name__)
 
-@router.get("/health")
-def health_check():
-    """백엔드 상태 및 헬스 체크 엔드포인트"""
-    logger.info("GET /health 호출됨")
-    return {"status": "healthy", "message": "Personal AI OS 백엔드가 성공적으로 가동 중입니다."}
-
-# ----------------- 실시간 외부 날씨 API -----------------
+# ----------------- 날씨 API -----------------
 
 @router.get("/weather", response_model=WeatherResponse)
 def get_weather():
-    """실시간 서울 날씨 정보 반환 (OpenWeatherMap API 연동)"""
+    """실시간 서울 날씨 정보를 반환하는 API"""
     logger.info("GET /weather 호출됨")
     return weather_service.get_current_weather()
 
-# ----------------- 실시간 외부 환율 API -----------------
+# ----------------- 외환 환율 API -----------------
 
 @router.get("/exchange", response_model=List[ExchangeItem])
 def get_exchange():
-    """실시간 주요 원화 환율 정보 반환 (ER-API 연동)"""
+    """실시간 외환 환율 고시 정보를 반환하는 API"""
     logger.info("GET /exchange 호출됨")
     return finance_service.get_realtime_exchange()
 
-# ----------------- 관심 주식 DB CRUD 및 실시간 시세 API -----------------
+# ----------------- 주식 포트폴리오 및 시세 API -----------------
 
-@router.get("/stocks", response_model=List[StockItem])
+@router.get("/stocks", response_model=StockPortfolioResponse)
 def get_stocks(db: Session = Depends(get_db)):
-    """DB에 등록된 관심 종목들의 실시간 주식 가격 정보를 반환 (yfinance 연동)"""
-    logger.info("GET /stocks 호출됨 (동적 관심 주식 시황 조회)")
+    """DB에 등록된 보유 주식 종목들의 실시간 가격 및 평가금액, 손익, 수익률 계산 데이터 반환"""
+    logger.info("GET /stocks 호출됨 (보유 주식 포트폴리오 실시간 산출)")
     
-    # DB에 저장된 사용자의 관심 주식 심볼 리스트 수집
     db_stocks = db.query(UserStock).order_by(UserStock.created_at.asc()).all()
     
-    # 서비스에 전달할 형식인 [{"id": ..., "symbol": ..., "name": ...}] 구조로 변환
-    stock_payload = [{"id": s.id, "symbol": s.symbol, "name": s.name} for s in db_stocks]
+    stock_payload = [
+        {
+            "id": s.id,
+            "symbol": s.symbol,
+            "name": s.name,
+            "quantity": s.quantity,
+            "avg_buy_price": s.avg_buy_price
+        } 
+        for s in db_stocks
+    ]
     
-    # 실시간 시세 수집 후 리턴
-    return finance_service.get_realtime_stocks(stock_payload)
-
-import pandas as pd
-from typing import Dict, Any
+    return finance_service.get_portfolio_data(stock_payload)
 
 # 🇰🇷 한국거래소(KRX) 상장법인 실시간 마스터 데이터 메모리 캐시
 _krx_cache: List[Dict[str, Any]] = []
 
 def _load_krx_cache():
-    """대한민국 정부 한국거래소(KRX) 상장법인 공식 마스터 리스트를 실시간 다운로드하여 메모리에 캐싱"""
+    """대한민국 정부 한국거래소(KRX) 상장법인 공식 마스터 리스트를 다운로드하여 메모리에 캐싱"""
     global _krx_cache
     if _krx_cache:
         return
     try:
-        logger.info("KRX 캐시 적재 시작 - 한국거래소 상장사 전체 목록 실시간 다운로드 중...")
+        logger.info("KRX 캐시 적재 시작 - 한국거래소 상장사 목록 다운로드 중...")
         url = "http://kind.krx.co.kr/corpgeneral/corpList.do?method=download"
-        # CP949 인코딩을 적용해 한글 종목명 깨짐 현상을 근본적으로 해결합니다.
         df = pd.read_html(url, header=0, encoding="cp949")[0]
         
         temp_list = []
         for _, row in df.iterrows():
-            code = str(row["종목코드"]).zfill(6) # 005930 과 같이 6자리 패딩 보장
+            code = str(row["종목코드"]).zfill(6)
             name = str(row["회사명"])
             temp_list.append({
                 "symbol": f"{code}.KS",
@@ -102,7 +103,7 @@ def _load_krx_cache():
 
 @router.get("/stocks/search")
 def search_stocks(q: str):
-    """한국거래소 실시간 상장사 목록과 야후 파이낸스 글로벌 API를 하이브리드로 병합해 실시간 검색"""
+    """한국거래소 실시간 상장사 목록과 야후 파이낸스 글로벌 API를 병합해 실시간 검색"""
     logger.info("GET /stocks/search 호출됨 - 검색어: '%s'", q)
     if not q or not q.strip():
         return []
@@ -111,7 +112,6 @@ def search_stocks(q: str):
     results = []
     seen_symbols = set()
     
-    # 1단계: 한국거래소(KRX) 메모리 캐시 로드 및 0ms 초고속 한글 검색 매핑
     try:
         _load_krx_cache()
         if _krx_cache:
@@ -122,12 +122,9 @@ def search_stocks(q: str):
     except Exception as krx_e:
         logger.error("GET /stocks/search KRX 캐시 필터링 중 오류: %s", str(krx_e))
         
-    # 2단계: 글로벌 야후 파이낸스 API 호출 (영문/해외 주식 검색어 입력 시 폴백)
-    # 한글 입력 시 야후 서버가 400 Bad Request를 뿜는 제약을 방지하기 위해, 한글이 포함된 쿼리는 야후 호출을 패스합니다.
     is_korean = any(ord('가') <= ord(char) <= ord('힣') for char in query)
     
     if not is_korean:
-        import httpx
         headers = {
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
         }
@@ -145,8 +142,6 @@ def search_stocks(q: str):
                     for quote_item in quotes:
                         if quote_item.get("quoteType") == "EQUITY":
                             symbol = quote_item.get("symbol", "")
-                            
-                            # 중복 노출 배제
                             if symbol in seen_symbols or symbol.replace(".KS", "") in seen_symbols:
                                 continue
                                 
@@ -172,167 +167,166 @@ def search_stocks(q: str):
         except Exception as yahoo_e:
             logger.error("GET /stocks/search 야후 API 추가 조회 실패: %s", str(yahoo_e))
             
-    # 최대 8개 검색 제안 슬라이싱 반환
     final_results = results[:8]
     logger.info("GET /stocks/search 최종 반환 결과: %d건", len(final_results))
     return final_results
 
 @router.post("/stocks", response_model=StockResponse)
 def create_stock(payload: StockCreate, db: Session = Depends(get_db)):
-    """새로운 관심 주식 종목 추가"""
-    logger.info("POST /stocks 호출됨 - 심볼: '%s', 종목명: '%s'", payload.symbol, payload.name)
+    """새로운 보유 주식 종목 추가 (티커, 종목명, 수량, 평균매수가)"""
+    logger.info("POST /stocks 호출됨 - 심볼: '%s', 수량: %.2f, 평단가: %.2f", payload.symbol, payload.quantity, payload.avg_buy_price)
     
-    # 중복 체크
     exists = db.query(UserStock).filter(UserStock.symbol == payload.symbol).first()
     if exists:
         logger.warning("POST /stocks 실패 - 이미 등록된 주식 기호: %s", payload.symbol)
-        raise HTTPException(status_code=400, detail="이미 관심 종목에 등록되어 있는 티커입니다.")
+        raise HTTPException(status_code=400, detail="이미 포트폴리오에 등록되어 있는 티커입니다.")
         
     db_stock = UserStock(
         symbol=payload.symbol,
-        name=payload.name
+        name=payload.name,
+        quantity=payload.quantity,
+        avg_buy_price=payload.avg_buy_price
     )
     db.add(db_stock)
     db.commit()
     db.refresh(db_stock)
-    logger.info("관심 주식 추가 완료: ID=%d, 심볼=%s", db_stock.id, db_stock.symbol)
+    logger.info("보유 주식 추가 완료: ID=%d, 심볼=%s", db_stock.id, db_stock.symbol)
+    return db_stock
+
+@router.put("/stocks/{stock_id}", response_model=StockResponse)
+def update_stock(stock_id: int, payload: StockUpdate, db: Session = Depends(get_db)):
+    """보유 주식 수량 및 평균 매수가 수정"""
+    logger.info("PUT /stocks/%d 호출됨 - quantity: %s, avg_buy_price: %s", stock_id, payload.quantity, payload.avg_buy_price)
+    
+    db_stock = db.query(UserStock).filter(UserStock.id == stock_id).first()
+    if not db_stock:
+        raise HTTPException(status_code=404, detail="해당 보유 주식을 찾을 수 없습니다.")
+        
+    if payload.quantity is not None:
+        db_stock.quantity = payload.quantity
+    if payload.avg_buy_price is not None:
+        db_stock.avg_buy_price = payload.avg_buy_price
+        
+    db.commit()
+    db.refresh(db_stock)
+    logger.info("보유 주식 수정 완료: ID=%d, 심볼=%s", db_stock.id, db_stock.symbol)
     return db_stock
 
 @router.delete("/stocks/{stock_id}")
 def delete_stock(stock_id: int, db: Session = Depends(get_db)):
-    """관심 주식 종목 삭제"""
+    """보유 주식 종목 삭제"""
     logger.info("DELETE /stocks/%d 호출됨", stock_id)
     db_stock = db.query(UserStock).filter(UserStock.id == stock_id).first()
     if not db_stock:
         logger.warning("DELETE /stocks/%d 실패 - 종목을 찾을 수 없음", stock_id)
-        raise HTTPException(status_code=404, detail="관심 종목을 찾을 수 없습니다.")
+        raise HTTPException(status_code=404, detail="보유 종목을 찾을 수 없습니다.")
         
     db.delete(db_stock)
     db.commit()
-    logger.info("관심 주식 해제 완료: ID=%d", stock_id)
-    return {"message": "관심 종목이 성공적으로 해제되었습니다."}
+    logger.info("보유 주식 삭제 완료: ID=%d", stock_id)
+    return {"message": "보유 종목이 성공적으로 삭제되었습니다."}
+
+@router.get("/stocks/{symbol}/chart", response_model=StockChartResponse)
+def get_stock_chart(symbol: str, range: str = "1m"):
+    """특정 티커 종목의 기간별(1d, 1w, 1m, 3m, 1y) 주가 추이 차트 데이터 제공"""
+    logger.info("GET /stocks/%s/chart 호출됨 - range: %s", symbol, range)
+    return finance_service.get_stock_chart(symbol, range)
 
 # ----------------- TODO (일정 관리) DB CRUD API -----------------
 
 @router.get("/todos", response_model=List[TodoResponse])
 def get_todos(db: Session = Depends(get_db)):
-    """DB에서 전체 일정 목록 조회"""
-    logger.info("GET /todos 호출됨 (전체 일정 조회)")
-    return db.query(Todo).order_by(Todo.created_at.asc()).all()
+    logger.info("GET /todos 호출됨")
+    return db.query(Todo).order_by(Todo.created_at.desc()).all()
 
 @router.post("/todos", response_model=TodoResponse)
 def create_todo(payload: TodoCreate, db: Session = Depends(get_db)):
-    """DB에 새로운 일정 추가"""
-    logger.info("POST /todos 호출됨: 제목='%s', 반복='%s'", payload.title, payload.recurrence)
+    logger.info("POST /todos 호출됨 - 제목: '%s'", payload.title)
     db_todo = Todo(
         title=payload.title,
-        description=payload.description,
-        location=payload.location,
         completed=payload.completed,
-        due_date=payload.due_date,
-        recurrence=payload.recurrence
+        due_date=payload.due_date
     )
     db.add(db_todo)
     db.commit()
     db.refresh(db_todo)
-    logger.info("새로운 일정 생성 완료: ID=%d", db_todo.id)
     return db_todo
 
-@router.patch("/todos/{todo_id}", response_model=TodoResponse)
+@router.put("/todos/{todo_id}", response_model=TodoResponse)
 def update_todo(todo_id: int, payload: TodoUpdate, db: Session = Depends(get_db)):
-    """일정 상태 및 필드 정보 수정"""
-    logger.info("PATCH /todos/%d 호출됨", todo_id)
+    logger.info("PUT /todos/%d 호출됨", todo_id)
     db_todo = db.query(Todo).filter(Todo.id == todo_id).first()
     if not db_todo:
-        logger.warning("PATCH /todos/%d 실패: 일정을 찾을 수 없음", todo_id)
-        raise HTTPException(status_code=404, detail="일정을 찾을 수 없습니다.")
-    
-    update_data = payload.model_dump(exclude_unset=True)
-    logger.info("일정 업데이트 데이터: %s", update_data)
-    for key, value in update_data.items():
-        setattr(db_todo, key, value)
+        raise HTTPException(status_code=404, detail="할 일 항목을 찾을 수 없습니다.")
+        
+    if payload.title is not None:
+        db_todo.title = payload.title
+    if payload.completed is not None:
+        db_todo.completed = payload.completed
+    if payload.due_date is not None:
+        db_todo.due_date = payload.due_date
         
     db.commit()
     db.refresh(db_todo)
-    logger.info("일정 업데이트 완료: ID=%d", db_todo.id)
     return db_todo
 
 @router.delete("/todos/{todo_id}")
 def delete_todo(todo_id: int, db: Session = Depends(get_db)):
-    """일정 삭제"""
     logger.info("DELETE /todos/%d 호출됨", todo_id)
     db_todo = db.query(Todo).filter(Todo.id == todo_id).first()
     if not db_todo:
-        logger.warning("DELETE /todos/%d 실패: 일정을 찾을 수 없음", todo_id)
-        raise HTTPException(status_code=404, detail="일정을 찾을 수 없습니다.")
+        raise HTTPException(status_code=404, detail="할 일 항목을 찾을 수 없습니다.")
+        
     db.delete(db_todo)
     db.commit()
-    logger.info("일정 삭제 완료: ID=%d", todo_id)
-    return {"message": "일정이 성공적으로 삭제되었습니다."}
+    return {"message": "할 일이 성공적으로 삭제되었습니다."}
 
-# ----------------- MEMO (빠른 메모) DB CRUD API -----------------
+# ----------------- 메모 (Post-it Note) DB CRUD API -----------------
 
 @router.get("/memos", response_model=List[MemoResponse])
 def get_memos(db: Session = Depends(get_db)):
-    """전체 메모 목록 조회"""
-    logger.info("GET /memos 호출됨 (전체 메모 조회)")
+    logger.info("GET /memos 호출됨")
     return db.query(Memo).order_by(Memo.created_at.desc()).all()
 
 @router.post("/memos", response_model=MemoResponse)
 def create_memo(payload: MemoCreate, db: Session = Depends(get_db)):
-    """새로운 메모 추가"""
-    logger.info("POST /memos 호출됨 (메모 길이: %d)", len(payload.content))
-    db_memo = Memo(content=payload.content)
+    logger.info("POST /memos 호출됨")
+    db_memo = Memo(
+        content=payload.content,
+        color=payload.color
+    )
     db.add(db_memo)
     db.commit()
     db.refresh(db_memo)
-    logger.info("새로운 메모 생성 완료: ID=%d", db_memo.id)
     return db_memo
 
 @router.delete("/memos/{memo_id}")
 def delete_memo(memo_id: int, db: Session = Depends(get_db)):
-    """메모 삭제"""
     logger.info("DELETE /memos/%d 호출됨", memo_id)
     db_memo = db.query(Memo).filter(Memo.id == memo_id).first()
     if not db_memo:
-        logger.warning("DELETE /memos/%d 실패: 메모를 찾을 수 없음", memo_id)
-        raise HTTPException(status_code=404, detail="메모를 찾을 수 없습니다.")
+        raise HTTPException(status_code=404, detail="메모 항목을 찾을 수 없습니다.")
+        
     db.delete(db_memo)
     db.commit()
-    logger.info("메모 삭제 완료: ID=%d", memo_id)
     return {"message": "메모가 성공적으로 삭제되었습니다."}
 
-# ----------------- AI Chat API -----------------
+# ----------------- AI 대화 및 브리핑 API -----------------
 
 @router.post("/chat", response_model=ChatResponse)
-def post_chat(payload: ChatRequest):
-    """AI 비서 대화 엔드포인트 (Provider Layer 경유)"""
-    provider = payload.provider
-    logger.info("POST /chat 호출됨: 프로바이더=%s, 메시지 길이=%d", provider or ai_service.default_provider, len(payload.message))
-    try:
-        reply = ai_service.chat(payload.message, provider_name=provider)
-        logger.info("AI 답변 생성 완료 (길이: %d)", len(reply))
-        return ChatResponse(reply=reply, provider=provider or ai_service.default_provider)
-    except ValueError as e:
-        logger.error("POST /chat 에러 발생: %s", str(e))
-        raise HTTPException(status_code=400, detail=str(e))
-
-# ----------------- 실시간 GitHub 최근 활동 API -----------------
+def chat_with_ai(payload: ChatRequest):
+    logger.info("POST /chat 호출됨 - 메시지: '%s'", payload.message)
+    reply, provider = ai_service.chat(payload.message, payload.provider)
+    return ChatResponse(reply=reply, provider=provider)
 
 @router.get("/github/events", response_model=List[GitHubEventItem])
 def get_github_events():
-    """GitHub API 연동을 통한 최근 사용자 개발 이벤트 내역 조회"""
     logger.info("GET /github/events 호출됨")
-    return github_service.get_recent_events()
-
-# ----------------- 오늘의 AI 종합 브리핑 API -----------------
+    return github_service.get_user_events()
 
 @router.get("/briefing", response_model=BriefingResponse)
 def get_daily_briefing(db: Session = Depends(get_db)):
-    """날씨, 환율, 주식, 일정, 메모, GitHub 활동을 종합 요약한 오늘의 브리핑 생성"""
-    logger.info("GET /briefing 호출됨 (종합 일일 브리핑 리포트 요청)")
-    briefing_content = briefing_service.generate_daily_briefing(db)
-    
-    # ISO 형식의 타임스탬프로 생성 시각 반환
-    current_time_str = datetime.now().isoformat()
-    return BriefingResponse(content=briefing_content, created_at=current_time_str)
+    logger.info("GET /briefing 호출됨")
+    content = briefing_service.generate_daily_briefing(db)
+    now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    return BriefingResponse(content=content, created_at=now_str)
