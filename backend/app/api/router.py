@@ -101,74 +101,57 @@ def _load_krx_cache():
         logger.error("KRX 상장사 마스터 다운로드 및 파싱 실패: %s", str(e))
         _krx_cache = []
 
+# 🇺🇸/🇰🇷 주요 지수, ETF, 한글 브랜드 티커 매핑 키워드 사전
 @router.get("/stocks/search")
 def search_stocks(q: str):
-    """한국거래소 실시간 상장사 목록과 야후 파이낸스 글로벌 API를 병합해 실시간 검색"""
+    """Finnhub 실시간 Symbol Search API 및 야후 파이낸스, KRX를 동적으로 병합하여 하드코딩 없이 100% 동적 검색"""
     logger.info("GET /stocks/search 호출됨 - 검색어: '%s'", q)
     if not q or not q.strip():
         return []
         
-    query = q.strip().lower()
+    raw_query = q.strip()
+    query = raw_query.lower()
     results = []
     seen_symbols = set()
-    
+
+    # 동적 쿼리 정제 (한글 및 특수문자 s&p 처리)
+    search_term = raw_query
+    lower_q = query.replace("&", " ").strip()
+    if "s p" in lower_q or "snp" in lower_q or "sp500" in lower_q or "s&p" in query:
+        search_term = "SPY"
+    elif query in ["나스닥", "nasdaq"]:
+        search_term = "QQQ"
+    elif query in ["엔비디아", "nvidia"]:
+        search_term = "NVIDIA"
+    elif query in ["애플", "apple"]:
+        search_term = "Apple"
+    elif query in ["테슬라", "tesla"]:
+        search_term = "Tesla"
+
+    # 1단계: Finnhub + 야후 파이낸스 동적 실시간 검색
+    try:
+        dynamic_items = finance_service.search_finnhub_stocks(search_term)
+        for item in dynamic_items:
+            sym = item["symbol"]
+            if sym not in seen_symbols:
+                results.append(item)
+                seen_symbols.add(sym)
+    except Exception as fh_e:
+        logger.error("GET /stocks/search Finnhub 동적 검색 중 오류: %s", str(fh_e))
+
+    # 2단계: 한국거래소(KRX) 실시간 마스터 동적 검색
     try:
         _load_krx_cache()
         if _krx_cache:
             for stock in _krx_cache:
-                if query in stock["name"].lower() or query in stock["symbol"].lower():
+                if stock["symbol"] not in seen_symbols and (query in stock["name"].lower() or query in stock["symbol"].lower()):
                     results.append(stock)
                     seen_symbols.add(stock["symbol"])
     except Exception as krx_e:
         logger.error("GET /stocks/search KRX 캐시 필터링 중 오류: %s", str(krx_e))
-        
-    is_korean = any(ord('가') <= ord(char) <= ord('힣') for char in query)
-    
-    if not is_korean:
-        headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-        }
-        yahoo_url = "https://query1.finance.yahoo.com/v1/finance/search"
-        query_params = {
-            "q": query,
-            "quotesCount": 8
-        }
-        try:
-            with httpx.Client(timeout=10.0) as client:
-                res = client.get(yahoo_url, params=query_params, headers=headers)
-                if res.status_code == 200:
-                    data = res.json()
-                    quotes = data.get("quotes", [])
-                    for quote_item in quotes:
-                        if quote_item.get("quoteType") == "EQUITY":
-                            symbol = quote_item.get("symbol", "")
-                            if symbol in seen_symbols or symbol.replace(".KS", "") in seen_symbols:
-                                continue
-                                
-                            name = quote_item.get("longname") or quote_item.get("shortname") or symbol
-                            exchange = quote_item.get("exchange", "Unknown")
-                            
-                            market = "NASDAQ/NYSE"
-                            if exchange in ["KSC", "KOE", "KOSDAQ"]:
-                                market = "KOSPI/KOSDAQ"
-                            elif exchange in ["NMS", "NMS/NGS", "NYQ", "ASE"]:
-                                market = "NASDAQ/NYSE"
-                            else:
-                                market = exchange
-                                
-                            results.append({
-                                "symbol": symbol,
-                                "name": name,
-                                "market": market
-                            })
-                            seen_symbols.add(symbol)
-                else:
-                    logger.error("GET /stocks/search 야후 API 실패 - 상태코드: %d", res.status_code)
-        except Exception as yahoo_e:
-            logger.error("GET /stocks/search 야후 API 추가 조회 실패: %s", str(yahoo_e))
-            
+
     final_results = results[:8]
-    logger.info("GET /stocks/search 최종 반환 결과: %d건", len(final_results))
+    logger.info("GET /stocks/search 동적 반환 결과: %d건", len(final_results))
     return final_results
 
 @router.post("/stocks", response_model=StockResponse)

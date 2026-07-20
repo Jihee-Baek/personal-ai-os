@@ -16,9 +16,10 @@ class Settings(BaseSettings):
     # OpenRouter API 인증키
     OPENROUTER_API_KEY: str = Field(default="mock_key")
     
-    # 깃허브 및 날씨 등 외부 서비스 토큰
+    # 깃허브, 날씨, Finnhub 등 외부 서비스 토큰
     GITHUB_TOKEN: str = Field(default="mock_token")
     WEATHER_API_KEY: str = Field(default="mock_weather_key")
+    FINNHUB_API_KEY: str = Field(default="ct491npr01qiiv1d0870ct491npr01qiiv1d087g")
 
     # Pydantic v2 설정 구성
     model_config = SettingsConfigDict(

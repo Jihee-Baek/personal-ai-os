@@ -284,3 +284,75 @@ class FinanceService:
             "range": range_type,
             "points": points
         }
+
+    def search_finnhub_stocks(self, query: str) -> List[Dict[str, Any]]:
+        """
+        Finnhub 공식 실시간 Symbol Search API를 우선 호출하고,
+        토큰 만료/오류 발생 시 야후 파이낸스 동적 API로 자동 폴백하여 하드코딩 없이 100% 동적 수집합니다.
+        """
+        from app.core.config import settings
+        logger.info("FinanceService: Finnhub/야후 동적 티커 검색 연동 - query: '%s'", query)
+        
+        url = "https://finnhub.io/api/v1/search"
+        params = {
+            "q": query,
+            "token": settings.FINNHUB_API_KEY
+        }
+        results = []
+        
+        try:
+            with httpx.Client(timeout=6.0) as client:
+                res = client.get(url, params=params)
+                if res.status_code == 200:
+                    data = res.json()
+                    raw_results = data.get("result", [])
+                    for item in raw_results:
+                        symbol = item.get("symbol", "")
+                        display_symbol = item.get("displaySymbol") or symbol
+                        description = item.get("description", display_symbol)
+                        item_type = item.get("type", "")
+                        
+                        market_label = "NASDAQ/NYSE"
+                        if "ETP" in item_type or "ETF" in item_type:
+                            market_label = "ETF"
+                        elif "INDEX" in item_type:
+                            market_label = "INDEX"
+                        elif "Common Stock" in item_type:
+                            market_label = "Stock"
+                            
+                        results.append({
+                            "symbol": display_symbol,
+                            "name": description,
+                            "market": market_label
+                        })
+                    logger.info("FinanceService: Finnhub 동적 검색 성공 (%d건 수신)", len(results))
+                else:
+                    logger.warning("FinanceService: Finnhub API status %d - 야후 파이낸스 동적 엔진으로 전환합니다.", res.status_code)
+        except Exception as e:
+            logger.error("FinanceService: Finnhub API 호출 중 예외 발생: %s", str(e))
+            
+        # Finnhub 결과가 비어있거나 401 오류 시 야후 파이낸스 동적 실시간 검색 폴백
+        if not results:
+            try:
+                headers = {
+                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+                }
+                yahoo_url = "https://query1.finance.yahoo.com/v1/finance/search"
+                query_params = {"q": query, "quotesCount": 10}
+                with httpx.Client(timeout=6.0) as client:
+                    res = client.get(yahoo_url, params=query_params, headers=headers)
+                    if res.status_code == 200:
+                        data = res.json()
+                        for quote_item in data.get("quotes", []):
+                            q_type = quote_item.get("quoteType", "")
+                            if q_type in ["EQUITY", "ETF", "MUTUALFUND", "INDEX"]:
+                                symbol = quote_item.get("symbol", "")
+                                if symbol:
+                                    name = quote_item.get("longname") or quote_item.get("shortname") or symbol
+                                    market = "ETF" if q_type == "ETF" else ("INDEX" if q_type == "INDEX" else "Stock")
+                                    results.append({"symbol": symbol, "name": name, "market": market})
+                        logger.info("FinanceService: 야후 동적 검색 폴백 성공 (%d건 수신)", len(results))
+            except Exception as y_err:
+                logger.error("FinanceService: 야후 동적 폴백 오류: %s", str(y_err))
+                
+        return results
