@@ -19,10 +19,13 @@ CREATE TABLE IF NOT EXISTS memos (
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL    -- 생성 시각
 );
 
--- 3. 사용자 관심 주식 종목 테이블 (user_stocks)
+-- 3. 보유 주식 포트폴리오 종목 테이블 (user_stocks)
 CREATE TABLE IF NOT EXISTS user_stocks (
     id SERIAL PRIMARY KEY,
-    symbol VARCHAR(20) UNIQUE NOT NULL,                                       -- 주식 티커 / 종목코드 (예: "005930.KS", "AAPL")
-    name VARCHAR(100) NOT NULL,                                               -- 종목명 (예: "삼성전자", "애플")
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL    -- 생성 시각
+    symbol VARCHAR(20) UNIQUE NOT NULL,                                       -- 주식 티커 / 종목코드 (예: "NVDA", "005930.KS")
+    name VARCHAR(100) NOT NULL,                                               -- 종목명 (예: "NVIDIA", "삼성전자")
+    quantity DOUBLE PRECISION DEFAULT 1.0 NOT NULL,                           -- 보유 수량 (주)
+    avg_buy_price DOUBLE PRECISION DEFAULT 0.0 NOT NULL,                      -- 평균 매수가 (1주당 가격)
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL,   -- 생성 시각
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP             -- 수정 시각
 );

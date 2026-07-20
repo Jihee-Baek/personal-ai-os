@@ -14,12 +14,36 @@ logging.basicConfig(
 logger = logging.getLogger("app.main")
 logger.info("Personal AI OS 백엔드 로깅 시스템 기동")
 
-# 테이블 자동 생성 보장
-try:
-    Base.metadata.create_all(bind=engine)
-    logger.info("Database 테이블 스키마 동적 마이그레이션 및 생성 완료")
-except Exception as db_err:
-    logger.error("Database 테이블 생성 중 오류: %s", str(db_err))
+from sqlalchemy import text
+
+def _auto_migrate_db():
+    """운영계 및 기존 DB의 user_stocks 테이블에 신규 칼럼(quantity, avg_buy_price, updated_at)이 없을 경우 동적 추가"""
+    try:
+        Base.metadata.create_all(bind=engine)
+        with engine.begin() as conn:
+            is_sqlite = "sqlite" in str(engine.url)
+            if is_sqlite:
+                try:
+                    conn.execute(text("ALTER TABLE user_stocks ADD COLUMN quantity FLOAT DEFAULT 1.0;"))
+                except Exception:
+                    pass
+                try:
+                    conn.execute(text("ALTER TABLE user_stocks ADD COLUMN avg_buy_price FLOAT DEFAULT 0.0;"))
+                except Exception:
+                    pass
+                try:
+                    conn.execute(text("ALTER TABLE user_stocks ADD COLUMN updated_at DATETIME;"))
+                except Exception:
+                    pass
+            else:
+                conn.execute(text("ALTER TABLE user_stocks ADD COLUMN IF NOT EXISTS quantity DOUBLE PRECISION DEFAULT 1.0 NOT NULL;"))
+                conn.execute(text("ALTER TABLE user_stocks ADD COLUMN IF NOT EXISTS avg_buy_price DOUBLE PRECISION DEFAULT 0.0 NOT NULL;"))
+                conn.execute(text("ALTER TABLE user_stocks ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP WITH TIME ZONE;"))
+        logger.info("Database user_stocks 테이블 신규 칼럼(quantity, avg_buy_price) 자동 마이그레이션 성공")
+    except Exception as db_err:
+        logger.error("Database 스키마 동적 마이그레이션 중 에러 발생: %s", str(db_err))
+
+_auto_migrate_db()
 
 app = FastAPI(
     title=settings.PROJECT_NAME,
