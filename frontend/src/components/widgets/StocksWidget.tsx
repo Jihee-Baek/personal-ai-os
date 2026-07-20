@@ -43,7 +43,7 @@ interface SuggestionItem {
 }
 
 interface ChartPoint {
-  timestamp: str;
+  timestamp: string;
   price: number;
 }
 
