@@ -8,7 +8,7 @@ import {
   Clock, CloudSun, Wallet, BookOpen, 
   Newspaper, Laptop, FileText, Radio, 
   MapPin, Milestone, Sparkles, Compass, X, Pin,
-  Play, Square, AlertCircle, Train, RotateCcw
+  Play, Square, AlertCircle, Train, RotateCcw, Mountain
 } from 'lucide-react';
 import TransparentImage from './TransparentImage';
 import WeatherParticleOverlay, { WeatherType } from './WeatherParticleOverlay';
@@ -31,6 +31,14 @@ interface TodoItem {
   title: string;
   completed: boolean;
 }
+
+// 🏞️ 4대 무한 순환 파노라마 풍경 에셋 데이터셋
+const SCENERY_LIST = [
+  { id: 'city', name: '🌆 영롱한 도시 숲', url: '/sceneries/scenery_city.jpg' },
+  { id: 'country', name: '🌾 상쾌한 시골 들판', url: '/sceneries/scenery_countryside.jpg' },
+  { id: 'ocean', name: '🌊 에메랄드 해안선', url: '/sceneries/scenery_ocean.jpg' },
+  { id: 'mountain', name: '🏔️ 웅장한 설산 산맥', url: '/sceneries/scenery_mountain.jpg' },
+];
 
 // 🛡️ 런타임 세이프티 가드용 기본값 정의
 const DEFAULT_ICON_POSITIONS: Record<WidgetType, { x: number; y: number }> = {
@@ -88,7 +96,10 @@ export default function CabinScene() {
   const [isOffWork, setIsOffWork] = useState<boolean>(false);   // 퇴근 여부
   const [workSeconds, setWorkSeconds] = useState<number>(0);     // 누적 근무 초
 
-  // 4. 로컬 시간대에 따른 명암 조절, 타이머 째깍거림 및 로컬스토리지 복원 (병합 안전 가드 포함)
+  // 4. 🏞️ 실시간 순환 창밖 풍경 인덱스 상태
+  const [sceneryIndex, setSceneryIndex] = useState<number>(0);
+
+  // 5. 로컬 시간대에 따른 명암 조절, 타이머 째깍거림 및 로컬스토리지 복원
   useEffect(() => {
     const interval = setInterval(() => {
       const now = new Date();
@@ -128,25 +139,12 @@ export default function CabinScene() {
       const savedPins = localStorage.getItem('cabin_pinned_widgets');
       const savedPositions = localStorage.getItem('cabin_widget_positions');
       const savedIcons = localStorage.getItem('cabin_icon_positions');
+      const savedScenery = localStorage.getItem('cabin_scenery_index');
 
-      if (savedPins) {
-        setPinnedWidgets({
-          ...DEFAULT_PINNED_WIDGETS,
-          ...JSON.parse(savedPins)
-        });
-      }
-      if (savedPositions) {
-        setWidgetPositions({
-          ...DEFAULT_WIDGET_POSITIONS,
-          ...JSON.parse(savedPositions)
-        });
-      }
-      if (savedIcons) {
-        setIconPositions({
-          ...DEFAULT_ICON_POSITIONS,
-          ...JSON.parse(savedIcons)
-        });
-      }
+      if (savedPins) setPinnedWidgets({ ...DEFAULT_PINNED_WIDGETS, ...JSON.parse(savedPins) });
+      if (savedPositions) setWidgetPositions({ ...DEFAULT_WIDGET_POSITIONS, ...JSON.parse(savedPositions) });
+      if (savedIcons) setIconPositions({ ...DEFAULT_ICON_POSITIONS, ...JSON.parse(savedIcons) });
+      if (savedScenery) setSceneryIndex(parseInt(savedScenery, 10));
 
       const savedCommute = localStorage.getItem('cabin_is_commuted');
       const savedOffWork = localStorage.getItem('cabin_is_off_work');
@@ -156,13 +154,26 @@ export default function CabinScene() {
       if (savedOffWork) setIsOffWork(savedOffWork === 'true');
       if (savedSeconds) setWorkSeconds(parseInt(savedSeconds, 10));
     } catch (e) {
-      console.error("로컬스토리지 상태 복원 실패 (기본값 작동):", e);
+      console.error("로컬스토리지 상태 복원 실패:", e);
     }
 
     return () => clearInterval(interval);
   }, []);
 
-  // 5. 출퇴근 조작 핸들러
+  // 6. 🚆 기차가 달리는 동안(isCommuted && !isOffWork) 30초마다 풍경 자동 파노라마 순환
+  useEffect(() => {
+    if (!isCommuted || isOffWork) return;
+    const sceneryTimer = setInterval(() => {
+      setSceneryIndex(prev => {
+        const nextIdx = (prev + 1) % SCENERY_LIST.length;
+        localStorage.setItem('cabin_scenery_index', nextIdx.toString());
+        return nextIdx;
+      });
+    }, 30000); // 30초 마다 풍경이 아름답게 바뀜
+    return () => clearInterval(sceneryTimer);
+  }, [isCommuted, isOffWork]);
+
+  // 7. 출퇴근 조작 핸들러
   const handleCommute = () => {
     setIsCommuted(true);
     setIsOffWork(false);
@@ -175,7 +186,7 @@ export default function CabinScene() {
     localStorage.setItem('cabin_is_off_work', 'true');
   };
 
-  // 6. 누적 근무 초 포맷터
+  // 8. 누적 근무 초 포맷터
   const formatWorkTime = (totalSeconds: number) => {
     const h = Math.floor(totalSeconds / 3600);
     const m = Math.floor((totalSeconds % 3600) / 60);
@@ -183,7 +194,7 @@ export default function CabinScene() {
     return `${h}시간 ${m}분 ${s}초`;
   };
 
-  // 7. 실시간 업무 주행률 계산 (08:00 ~ 17:00 기준)
+  // 9. 실시간 업무 주행률 계산 (08:00 ~ 17:00 기준)
   const getWorkProgress = () => {
     const now = new Date();
     const currentMinutes = now.getHours() * 60 + now.getMinutes();
@@ -198,7 +209,7 @@ export default function CabinScene() {
     return (elapsed / total) * 100;
   };
 
-  // 8. 야근(Extra) 운행 시간 계산
+  // 10. 야근(Extra) 운행 시간 계산
   const getExtraTimeText = () => {
     const now = new Date();
     const currentMinutes = now.getHours() * 60 + now.getMinutes();
@@ -213,7 +224,7 @@ export default function CabinScene() {
     return null;
   };
 
-  // 9. 압정 핀 토글 함수
+  // 11. 압정 핀 토글 함수
   const togglePin = (type: WidgetType) => {
     const updatedPins = {
       ...pinnedWidgets,
@@ -227,7 +238,7 @@ export default function CabinScene() {
     }
   };
 
-  // 10. 위젯 드래그 종료
+  // 12. 위젯 드래그 종료
   const handleWidgetDragEnd = (type: WidgetType, info: any) => {
     const currentPos = widgetPositions[type] || DEFAULT_WIDGET_POSITIONS[type];
     const updatedPositions = {
@@ -241,7 +252,7 @@ export default function CabinScene() {
     localStorage.setItem('cabin_widget_positions', JSON.stringify(updatedPositions));
   };
 
-  // 11. 사물 소품 아이콘 드래그 종료
+  // 13. 사물 소품 아이콘 드래그 종료
   const handleIconDragEnd = (type: WidgetType, info: any) => {
     const currentPos = iconPositions[type] || DEFAULT_ICON_POSITIONS[type];
     const updatedIcons = {
@@ -255,7 +266,7 @@ export default function CabinScene() {
     localStorage.setItem('cabin_icon_positions', JSON.stringify(updatedIcons));
   };
 
-  // 12. 🧹 배치 및 핀 상태 초기화
+  // 14. 🧹 배치 및 핀 상태 초기화
   const resetLayout = () => {
     setIconPositions(DEFAULT_ICON_POSITIONS);
     localStorage.setItem('cabin_icon_positions', JSON.stringify(DEFAULT_ICON_POSITIONS));
@@ -265,16 +276,18 @@ export default function CabinScene() {
 
     setWidgetPositions(DEFAULT_WIDGET_POSITIONS);
     localStorage.setItem('cabin_widget_positions', JSON.stringify(DEFAULT_WIDGET_POSITIONS));
+    
+    setSceneryIndex(0);
+    localStorage.setItem('cabin_scenery_index', '0');
   };
 
-  // 12.5. 날씨 연동 실시간 Weather API 데이터 로드
+  // 15. 날씨 연동 실시간 Weather API 데이터 로드
   const { data: weatherData } = useQuery<{ condition: string }>({
     queryKey: ['weather'],
     queryFn: () => fetchFromAPI('/weather'),
-    refetchInterval: 15 * 60 * 1000, // 15분 마다 백엔드 날씨 데이터 갱신
+    refetchInterval: 15 * 60 * 1000,
   });
 
-  // 날씨 조건 문자열 파싱하여 4대 상태로 표준 정규화
   const getWeatherCondition = (): WeatherType => {
     if (!weatherData?.condition) return 'Clear';
     const cond = weatherData.condition.toLowerCase();
@@ -297,28 +310,26 @@ export default function CabinScene() {
   const getWindowFilter = () => {
     switch (weatherCondition) {
       case 'Rainy':
-        return 'brightness(0.35) saturate(0.65) contrast(1.1) hue-rotate(15deg)'; // 우중충한 파란 톤
+        return 'brightness(0.35) saturate(0.65) contrast(1.1) hue-rotate(15deg)'; 
       case 'Snowy':
-        return 'brightness(0.75) grayscale(0.45) contrast(0.9)'; // 희뿌연 화이트아웃 톤
+        return 'brightness(0.75) grayscale(0.45) contrast(0.9)'; 
       case 'Cloudy':
-        return 'brightness(0.5) grayscale(0.5) contrast(0.95)'; // 어두운 회색 톤
+        return 'brightness(0.5) grayscale(0.5) contrast(0.95)'; 
       case 'Clear':
       default:
-        return 'brightness(0.9) saturate(1.0) contrast(1.0)'; // 원본 유지
+        return 'brightness(0.9) saturate(1.0) contrast(1.0)'; 
     }
   };
 
-  // 날씨와 시간에 따라 유기적으로 반응하는 실내 조명 톤 (오버레이)
+  // 날씨와 시간에 따라 유기적으로 반응하는 실내 조명 톤
   const getLightingOverlay = () => {
-    // 1순위: 악천후에 따른 조도 보정
     if (weatherCondition === 'Rainy') {
-      return 'bg-indigo-950/25 mix-blend-multiply'; // 비오는 날 어두운 침침함
+      return 'bg-indigo-950/25 mix-blend-multiply'; 
     }
     if (weatherCondition === 'Cloudy') {
-      return 'bg-slate-800/15 mix-blend-multiply'; // 흐린 날 뿌연 어두움
+      return 'bg-slate-800/15 mix-blend-multiply'; 
     }
 
-    // 2순위: 맑을 때 시간대별 객실 색조
     switch (timeOfDay) {
       case 'morning':
         return 'bg-amber-500/10 mix-blend-color-burn'; 
@@ -333,7 +344,7 @@ export default function CabinScene() {
     }
   };
 
-  // 13. 팝업 생성 원점(Origin) 좌표 매핑 (안전 가드 주입)
+  // 16. 팝업 생성 원점(Origin) 좌표 매핑
   const getWidgetOriginPx = (type: WidgetType | null): string => {
     if (!type) return '50% 50%';
     const pos = iconPositions[type] || DEFAULT_ICON_POSITIONS[type];
@@ -344,7 +355,7 @@ export default function CabinScene() {
   const journeyProgress = getWorkProgress();
   const extraTimeText = getExtraTimeText();
 
-  // 14. ⏱️ 팝업 및 고정 위젯 전용 출퇴근 운행 제어판 마크업
+  // 17. ⏱️ 팝업 및 고정 위젯 전용 출퇴근 운행 제어판 마크업 (풍경 수동 선택기 포함)
   const renderDashboardWidget = () => {
     return (
       <div className="flex flex-col gap-4 text-foreground p-1 select-none">
@@ -381,6 +392,32 @@ export default function CabinScene() {
           </div>
           <div className="text-[9px] text-muted-foreground text-right mt-0.5">
             일과 진행율: {journeyProgress.toFixed(1)}%
+          </div>
+        </div>
+
+        {/* 🏞️ 창밖 무한 파노라마 풍경 스위처 (수동 변경 탭) */}
+        <div className="flex flex-col gap-1.5 border-t border-white/10 pt-2.5">
+          <span className="text-[10px] text-muted-foreground font-semibold flex items-center gap-1">
+            <Mountain className="w-3 h-3 text-amber-400" />
+            <span>창밖 풍경 선택 (30초마다 자동 순환)</span>
+          </span>
+          <div className="grid grid-cols-2 gap-1.5">
+            {SCENERY_LIST.map((scenery, idx) => (
+              <button
+                key={scenery.id}
+                onClick={() => {
+                  setSceneryIndex(idx);
+                  localStorage.setItem('cabin_scenery_index', idx.toString());
+                }}
+                className={`text-[9.5px] font-bold py-1.5 px-2 rounded-lg border transition-all cursor-pointer ${
+                  sceneryIndex === idx 
+                    ? 'bg-amber-500/20 border-amber-500/50 text-amber-300 shadow' 
+                    : 'bg-white/5 border-white/5 text-muted-foreground hover:bg-white/10'
+                }`}
+              >
+                {scenery.name}
+              </button>
+            ))}
           </div>
         </div>
 
@@ -429,7 +466,7 @@ export default function CabinScene() {
         {/* 소품 위치 초기화 보조 단추 */}
         <button 
           onClick={resetLayout}
-          className="flex items-center justify-center gap-1 bg-white/5 hover:bg-white/10 border border-white/5 text-[10px] text-muted-foreground hover:text-foreground py-1.5 rounded-lg transition-all"
+          className="flex items-center justify-center gap-1 bg-white/5 hover:bg-white/10 border border-white/5 text-[10px] text-muted-foreground hover:text-foreground py-1.5 rounded-lg transition-all cursor-pointer"
         >
           <RotateCcw className="w-3 h-3" />
           <span>사물 배치 초기화 (Reset)</span>
@@ -439,7 +476,7 @@ export default function CabinScene() {
     );
   };
 
-  // 15. 위젯 분기 렌더링 헬퍼
+  // 18. 위젯 분기 렌더링 헬퍼
   const renderWidgetContent = (type: WidgetType | null) => {
     switch (type) {
       case 'dashboard': return renderDashboardWidget();
@@ -480,12 +517,15 @@ export default function CabinScene() {
           {/* 기차 객실 일러스트 컨테이너 (3:2 비율 유지 cover) */}
           <div className="w-full h-full min-w-full min-h-full relative aspect-[3/2] bg-cover bg-center" style={{ backgroundImage: `url('/train_cabin_bg.png')` }}>
             
-            {/* 🏙️ [레이어 1]: 창문 영역 뒤 빌딩 실루엣 (Parallax 및 날씨 오버레이 통합) */}
-            <div className="absolute top-[4.5%] left-[12.2%] w-[59.3%] h-[62.5%] overflow-hidden z-0 bg-sky-950">
+            {/* 🏙️ [레이어 1]: 창문 영역 뒤 흐르는 4대 풍경 (상단 마진 대폭 끌어올림 100% 틈새 완벽 매움 핏) */}
+            <div className="absolute top-[-1.5%] left-[10.0%] w-[64.0%] h-[72.0%] overflow-hidden z-0 bg-sky-950">
               <div 
-                className="w-[200%] h-full bg-cover bg-repeat-x animate-[scrollLandscape_65s_linear_infinite]"
+                className="w-full h-full transition-all duration-1000 ease-in-out animate-[scrollLandscape_65s_linear_infinite]"
                 style={{ 
-                  backgroundImage: `url('/sky_city_scenery.jpg')`,
+                  backgroundImage: `url('${SCENERY_LIST[sceneryIndex].url}')`,
+                  backgroundSize: 'cover',
+                  backgroundPosition: 'center center',
+                  backgroundRepeat: 'repeat-x',
                   animationPlayState: isTrainMoving ? 'running' : 'paused',
                   filter: getWindowFilter()
                 }}
@@ -500,9 +540,9 @@ export default function CabinScene() {
               <div className="absolute inset-0 bg-gradient-to-tr from-white/5 via-transparent to-white/10 mix-blend-overlay pointer-events-none" />
             </div>
 
-            {/* 🛋️ [레이어 2]: 창문 뚫림 PNG 배경 */}
+            {/* 🛋️ [레이어 2]: 창문 뚫림 PNG 배경 (안티앨리어싱 매끈한 경계 적용) */}
             <div 
-              className="absolute inset-0 bg-cover bg-center bg-no-repeat z-10 pointer-events-none shadow-[inset_0_0_120px_rgba(0,0,0,0.4)]"
+              className="absolute inset-0 bg-cover bg-center bg-no-repeat z-10 pointer-events-none shadow-[inset_0_0_140px_rgba(0,0,0,0.55)]"
               style={{ backgroundImage: `url('/train_cabin_bg.png')` }}
             />
 
